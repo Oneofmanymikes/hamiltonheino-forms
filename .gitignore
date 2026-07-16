@@ -1,0 +1,8 @@
+# clasp local auth / project link — never commit
+.clasp.json
+.clasprc.json
+apps-script/.clasp.json
+
+# OS junk
+Thumbs.db
+.DS_Store

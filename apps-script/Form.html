@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root { --accent: <?= accent ?>; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:#1a1a1a; background:#fff; }
+    .card { max-width: 560px; margin: 0 auto; padding: 20px; }
+    h2 { margin: 0 0 4px; font-size: 1.35rem; }
+    .blurb { margin: 0 0 16px; color:#555; }
+    .fld { margin-bottom: 12px; }
+    label { display:block; font-weight:600; font-size:.9rem; margin-bottom:4px; }
+    input[type=text], input[type=email], input[type=tel], select, textarea {
+      width:100%; padding:10px 12px; border:1px solid #ccc; border-radius:8px; font-size:1rem; }
+    input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); border-color:var(--accent); }
+    .checks { display:grid; gap:6px; }
+    .chk { font-weight:400; display:flex; gap:8px; align-items:flex-start; }
+    .chk input { margin-top:3px; }
+    .consent { margin:14px 0; font-size:.85rem; color:#333; }
+    .note { font-size:.8rem; color:#666; background:#faf7f2; border-left:3px solid var(--accent); padding:8px 10px; border-radius:4px; }
+    button { width:100%; padding:13px; border:0; border-radius:8px; background:var(--accent); color:#fff;
+      font-size:1.05rem; font-weight:700; cursor:pointer; margin-top:6px; }
+    button:disabled { opacity:.6; cursor:default; }
+    .msg { margin-top:14px; padding:16px; border-radius:8px; font-weight:600; text-align:center; display:none; }
+    .msg.ok  { display:block; background:#e8f5e9; color:#1b5e20; }
+    .msg.err { display:block; background:#fdecea; color:#b71c1c; }
+    .msg .more { display:inline-block; margin-top:10px; font-weight:700; color:var(--accent); text-decoration:none; }
+    .hp { position:absolute !important; left:-9999px !important; height:0; width:0; }
+    .req { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2><?= def.title ?></h2>
+    <p class="blurb"><?= def.blurb ?></p>
+
+    <form id="f" onsubmit="return false;">
+      <!-- honeypot: bots fill this; humans never see it -->
+      <input class="hp" type="text" name="_hp" id="_hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+      <? for (var i = 0; i < def.fields.length; i++) { var fld = def.fields[i]; ?>
+        <div class="fld">
+          <label><?= fld.label ?><? if (fld.required) { ?> <span class="req">*</span><? } ?></label>
+          <? if (fld.type === 'select') { ?>
+            <select name="<?= fld.name ?>" <?= fld.required ? 'required' : '' ?>>
+              <option value="">Choose…</option>
+              <? for (var j = 0; j < fld.options.length; j++) { ?><option><?= fld.options[j] ?></option><? } ?>
+            </select>
+          <? } else if (fld.type === 'textarea') { ?>
+            <textarea name="<?= fld.name ?>" rows="3" <?= fld.required ? 'required' : '' ?>></textarea>
+          <? } else if (fld.type === 'multicheck') { ?>
+            <div class="checks">
+              <? for (var j = 0; j < fld.options.length; j++) { ?>
+                <label class="chk"><input type="checkbox" name="<?= fld.name ?>" value="<?= fld.options[j] ?>"> <?= fld.options[j] ?></label>
+              <? } ?>
+            </div>
+          <? } else { ?>
+            <input type="<?= fld.type ?>" name="<?= fld.name ?>" <?= fld.required ? 'required' : '' ?>>
+          <? } ?>
+        </div>
+      <? } ?>
+
+      <label class="chk consent"><input type="checkbox" id="consent" required> <?= consentLabel ?></label>
+
+      <? if (def.note) { ?><p class="note"><?= def.note ?> <a href="<?= donateUrl ?>" target="_blank" rel="noopener">Official donation page →</a></p><? } ?>
+
+      <button id="btn" type="button" onclick="submitForm()"><?= def.submit ?></button>
+      <div id="msg" class="msg"></div>
+    </form>
+  </div>
+
+  <script>
+    var LEARN_MORE_URL = '<?= learnMoreUrl ?>';
+
+    function submitForm() {
+      var f = document.getElementById('f');
+      if (!f.checkValidity()) { f.reportValidity(); return; }
+      if (!document.getElementById('consent').checked) { alert('Please agree to be contacted.'); return; }
+
+      var btn = document.getElementById('btn');
+      btn.disabled = true; btn.textContent = 'Sending…';
+
+      var data = { _hp: document.getElementById('_hp').value, consent: true };
+      var multi = {};
+      f.querySelectorAll('[name]').forEach(function (el) {
+        if (el.name === '_hp') return;
+        if (el.type === 'checkbox') { if (el.checked) (multi[el.name] = multi[el.name] || []).push(el.value); }
+        else data[el.name] = el.value;
+      });
+      Object.keys(multi).forEach(function (k) { data[k] = multi[k]; });
+
+      google.script.run
+        .withSuccessHandler(function () {
+          f.style.display = 'none';
+          var m = document.getElementById('msg');
+          m.className = 'msg ok';
+          m.innerHTML = 'Thank you! Your submission has been received.' +
+            '<br><a class="more" href="' + LEARN_MORE_URL + '" target="_blank" rel="noopener">Learn more at ontarioliberal.ca/yorksimcoe →</a>';
+        })
+        .withFailureHandler(function () {
+          btn.disabled = false; btn.textContent = 'Try again';
+          var m = document.getElementById('msg');
+          m.className = 'msg err';
+          m.textContent = 'Sorry, something went wrong. Please try again.';
+        })
+        .submitForm('<?= form ?>', data);
+    }
+  </script>
+</body>
+</html>
