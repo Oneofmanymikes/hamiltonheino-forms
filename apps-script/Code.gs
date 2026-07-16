@@ -7,7 +7,7 @@
  **********************************************************************/
 
 /*** 1) CONFIG — edit these ***/
-const SHEET_ID       = 'PASTE_YOUR_SPREADSHEET_ID_HERE';   // from the Sheet URL: /spreadsheets/d/<THIS>/edit
+const SHEET_ID       = '1qDoYvE6bu_eMkGxApGPvqgPh_CFkf4V1BeKZmANC130';   // "Vote Naomi — Form Submissions"
 const NOTIFY_EMAIL   = 'info@votenaomi.ca';
 const CANDIDATE      = 'Naomi Davison';
 const CAMPAIGN       = 'Naomi Davison · Ontario Liberal for York–Simcoe';  // shown in form + email
