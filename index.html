@@ -88,7 +88,7 @@
     /* ── Single edit point ──────────────────────────────────────────────
        Paste your Apps Script Web App URL (ends in /exec) between the quotes.
        Example: https://script.google.com/macros/s/AKfy.../exec              */
-    var BASE_URL = "PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE";
+    var BASE_URL = "https://script.google.com/macros/s/AKfycbxJ1i9GniQLVsQt1Bwo8iUbRjjOIGzsLqoXnWvB9s0bUx-erAVftAmBUDokHngxYtNhZg/exec";
 
     document.querySelectorAll('iframe.frame').forEach(function (f) {
       f.src = BASE_URL + "?form=" + f.getAttribute('data-form');
