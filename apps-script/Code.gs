@@ -14,7 +14,7 @@ const CAMPAIGN       = 'Naomi Davison · Ontario Liberal for York–Simcoe';  //
 const WEBSITE_URL    = 'https://votenaomi.ca';
 const LEARN_MORE_URL = 'https://ontarioliberal.ca/yorksimcoe';  // where supporters go for more info
 const ACCENT         = '#d71920';                                // Ontario Liberal red
-const DONATE_URL     = 'https://ontarioliberal.ca/yorksimcoe';   // TODO: point at the exact Elections-compliant donation page if one exists
+const DONATE_URL     = 'https://ontarioliberal.ca/donate/?pla=121';   // official Elections-compliant donation page (York–Simcoe PLA 121)
 
 /*** 2) FORM DEFINITIONS — add/remove fields freely ***/
 const CONSENT_LABEL = 'I agree to be contacted by the campaign by email, phone, or text. I can unsubscribe at any time.';
