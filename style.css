@@ -1,0 +1,56 @@
+/* Naomi Davison — Ontario Liberal, York–Simcoe · shared styles */
+:root{
+  --red:#d71920; --red-dark:#b3151a; --ink:#1a1a1a; --muted:#555; --bg:#f4f5f7;
+  --line:#e5e5e5; --card:#fff;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.5}
+a{color:var(--red)}
+
+/* Header / hero */
+.site-header{background:linear-gradient(135deg,var(--red) 0%,var(--red-dark) 100%);color:#fff;text-align:center;padding:34px 20px 30px}
+.site-header .eyebrow{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;opacity:.92;margin:0 0 10px;font-weight:600}
+.site-header h1{margin:0 0 4px;font-size:2rem;line-height:1.1}
+.site-header .riding{margin:0;font-size:1.1rem;font-weight:600;opacity:.97}
+.site-header .lede{margin:14px auto 0;max-width:620px;font-size:1rem;opacity:.96}
+.site-header .toplinks{margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.site-header .toplinks a{display:inline-block;background:rgba(255,255,255,.15);color:#fff;text-decoration:none;font-weight:600;font-size:.9rem;padding:8px 16px;border-radius:8px;border:1px solid rgba(255,255,255,.35)}
+.site-header .toplinks a:hover{background:rgba(255,255,255,.25)}
+
+/* slim header variant (action pages) */
+.site-header.slim{padding:22px 20px 20px}
+.site-header.slim h1{font-size:1.5rem}
+
+.wrap{max-width:1100px;margin:0 auto;padding:26px 16px 50px}
+.intro{text-align:center;color:var(--muted);max-width:720px;margin:0 auto 26px}
+
+/* Back link */
+.backbar{max-width:640px;margin:18px auto 0;padding:0 16px}
+.backbar a{display:inline-flex;align-items:center;gap:6px;color:var(--red);text-decoration:none;font-weight:600;font-size:.95rem}
+.backbar a:hover{text-decoration:underline}
+
+/* Hub cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px 22px;box-shadow:0 2px 8px rgba(0,0,0,.06);display:flex;flex-direction:column;text-align:center}
+.card .ico{font-size:2.2rem;line-height:1;margin-bottom:12px}
+.card h2{margin:0 0 8px;font-size:1.2rem}
+.card p{margin:0 0 20px;color:var(--muted);font-size:.95rem;flex:1}
+.btn{display:inline-block;background:var(--red);color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;font-size:1rem;transition:background .15s}
+.btn:hover{background:var(--red-dark)}
+.btn.block{display:block;width:100%}
+
+/* Action page: form frame */
+.formwrap{max-width:640px;margin:8px auto 0;padding:0 16px}
+.formcard{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.formcard h2{margin:0;padding:16px 20px;font-size:1.15rem;border-bottom:1px solid #eee;display:flex;align-items:center;gap:9px}
+iframe.form{width:100%;border:0;display:block}
+
+/* Secondary CTA (learn more) */
+.cta{max-width:820px;margin:36px auto 0;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px 22px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.cta h3{margin:0 0 8px;font-size:1.2rem}
+.cta p{margin:0 0 16px;color:var(--muted)}
+
+/* Footer */
+footer.site{text-align:center;color:#888;font-size:.82rem;padding:26px 20px 40px;line-height:1.6}
+footer.site a{color:#888}
