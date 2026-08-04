@@ -66,8 +66,9 @@
       <? if (def.note) { ?><p class="note"><?= def.note ?> <a href="<?= donateUrl ?>" target="_blank" rel="noopener">Official donation page →</a></p><? } ?>
 
       <button id="btn" type="button" onclick="submitForm()"><?= def.submit ?></button>
-      <div id="msg" class="msg"></div>
     </form>
+    <!-- msg must live OUTSIDE the form: the success handler hides the form, which would hide it too -->
+    <div id="msg" class="msg"></div>
   </div>
 
   <script>
