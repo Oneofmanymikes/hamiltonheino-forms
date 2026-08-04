@@ -11,7 +11,7 @@ const SHEET_ID       = '1KOnyhxwe01g9HOE3cLiAoXIgW1_wgEpMU0ZNUsq1NZU';   // "Ham
 const NOTIFY_EMAIL   = 'hello@hamiltonheino.ca';
 const CANDIDATE      = 'Heino Doessing';
 const CAMPAIGN       = 'Heino Doessing · Ontario Liberal for Hamilton East–Stoney Creek';  // shown in form + email
-const WEBSITE_URL    = 'https://hamiltonheino.ca';
+const WEBSITE_URL    = 'https://voteheino.ca';
 const LEARN_MORE_URL = 'https://ontarioliberal.ca/riding/hamilton-east-stoney-creek/';  // where supporters go for more info
 const ACCENT         = '#d71920';                                // Ontario Liberal red
 const DONATE_URL     = 'https://ontarioliberal.ca/donate/?pla=37';   // official Elections-compliant donation page (Hamilton East–Stoney Creek PLA 37)

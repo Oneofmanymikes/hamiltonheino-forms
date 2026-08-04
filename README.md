@@ -17,7 +17,7 @@ to **ontarioliberal.ca** for more information.
 | `apps-script/appsscript.json` | Manifest: OAuth scopes + web-app deployment settings |
 | `index.html` | Landing page (hero + About + priorities + Get Involved CTA) |
 | `style.css` | Shared styles (OLP red theme) |
-| `CNAME` | Custom domain for GitHub Pages (`hamiltonheino.ca`) |
+| `CNAME` | Custom domain for GitHub Pages (`voteheino.ca`) |
 | `getinvolved/index.html` | The hub — four action cards |
 | `getinvolved/{commit-to-vote,lawn-sign,donate,volunteer}/index.html` | One page per form (iframe embed) |
 | `embed-snippets.html` | Single-form iframe snippets to hand to partner websites |
@@ -91,7 +91,7 @@ I copy the `/exec` URL into the four form pages and `embed-snippets.html`.
 ### 7. 🧑 Publish GitHub Pages
 Create the repo **`hamiltonheino-forms`** on github.com (API repo-creation is blocked from this shell),
 push, then **Settings ▸ Pages ▸ Deploy from branch ▸ main /(root)** and set the custom domain to
-**`hamiltonheino.ca`** (check the spelling — GitHub commits that string straight into `CNAME`).
+**`voteheino.ca`** (check the spelling — GitHub commits that string straight into `CNAME`).
 
 DNS at the registrar:
 - Apex `@` → **A** → `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`
