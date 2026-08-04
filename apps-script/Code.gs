@@ -7,7 +7,7 @@
  **********************************************************************/
 
 /*** 1) CONFIG — edit these ***/
-const SHEET_ID       = 'PASTE_HEINO_SHEET_ID_HERE';   // "Hamilton Heino — Form Submissions" (Sheet ID from its URL)
+const SHEET_ID       = '1KOnyhxwe01g9HOE3cLiAoXIgW1_wgEpMU0ZNUsq1NZU';   // "Hamilton Heino — Form Submissions"
 const NOTIFY_EMAIL   = 'hello@hamiltonheino.ca';
 const CANDIDATE      = 'Heino Doessing';
 const CAMPAIGN       = 'Heino Doessing · Ontario Liberal for Hamilton East–Stoney Creek';  // shown in form + email
