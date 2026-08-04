@@ -1,20 +1,20 @@
 /**********************************************************************
- * Naomi Davison — Ontario Liberal, York–Simcoe
+ * Heino Doessing — Ontario Liberal, Hamilton East–Stoney Creek
  * Campaign Forms backend (single Apps Script web app)
  *
  * Serves 4 embeddable forms, writes each submission to a Google Sheet,
- * and emails info@votenaomi.ca on every submission.
+ * and emails hello@hamiltonheino.ca on every submission.
  **********************************************************************/
 
 /*** 1) CONFIG — edit these ***/
-const SHEET_ID       = '1qDoYvE6bu_eMkGxApGPvqgPh_CFkf4V1BeKZmANC130';   // "Vote Naomi — Form Submissions"
-const NOTIFY_EMAIL   = 'info@votenaomi.ca';
-const CANDIDATE      = 'Naomi Davison';
-const CAMPAIGN       = 'Naomi Davison · Ontario Liberal for York–Simcoe';  // shown in form + email
-const WEBSITE_URL    = 'https://votenaomi.ca';
-const LEARN_MORE_URL = 'https://ontarioliberal.ca/yorksimcoe';  // where supporters go for more info
+const SHEET_ID       = 'PASTE_HEINO_SHEET_ID_HERE';   // "Hamilton Heino — Form Submissions" (Sheet ID from its URL)
+const NOTIFY_EMAIL   = 'hello@hamiltonheino.ca';
+const CANDIDATE      = 'Heino Doessing';
+const CAMPAIGN       = 'Heino Doessing · Ontario Liberal for Hamilton East–Stoney Creek';  // shown in form + email
+const WEBSITE_URL    = 'https://hamiltonheino.ca';
+const LEARN_MORE_URL = 'https://ontarioliberal.ca/riding/hamilton-east-stoney-creek/';  // where supporters go for more info
 const ACCENT         = '#d71920';                                // Ontario Liberal red
-const DONATE_URL     = 'https://ontarioliberal.ca/donate/?pla=121';   // official Elections-compliant donation page (York–Simcoe PLA 121)
+const DONATE_URL     = 'https://ontarioliberal.ca/donate/?pla=37';   // official Elections-compliant donation page (Hamilton East–Stoney Creek PLA 37)
 
 /*** 2) FORM DEFINITIONS — add/remove fields freely ***/
 const CONSENT_LABEL = 'I agree to be contacted by the campaign by email, phone, or text. I can unsubscribe at any time.';
@@ -22,7 +22,7 @@ const CONSENT_LABEL = 'I agree to be contacted by the campaign by email, phone, 
 const FORMS = {
   vote: {
     tab: 'CommitToVote', title: 'Commit to Vote',
-    blurb: 'Add your name and let us know we can count on your support for Naomi Davison.',
+    blurb: 'Add your name and let us know we can count on your support for Heino Doessing.',
     submit: 'I Commit to Vote',
     fields: [
       { name:'first',  label:'First name', type:'text',  required:true },
@@ -34,7 +34,7 @@ const FORMS = {
   },
   sign: {
     tab: 'SignRequests', title: 'Request a Lawn Sign',
-    blurb: 'Show your support across York–Simcoe — request a sign for your lawn.',
+    blurb: 'Show your support across Hamilton East–Stoney Creek — request a sign for your lawn.',
     submit: 'Request My Sign',
     fields: [
       { name:'first',   label:'First name',    type:'text',  required:true },
@@ -67,7 +67,7 @@ const FORMS = {
   },
   volunteer: {
     tab: 'Volunteers', title: 'Volunteer Sign-Up',
-    blurb: 'Join the team to elect Naomi Davison. Tell us how you would like to help.',
+    blurb: 'Join the team to elect Heino Doessing. Tell us how you would like to help.',
     submit: 'Sign Me Up',
     fields: [
       { name:'first',       label:'First name', type:'text',  required:true },
