@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+           margin: 0; padding: 16px; color: #1a1a1a; background: #f6f6f7; }
+    .wrap { max-width: 620px; margin: 0 auto; }
+
+    .login { max-width: 340px; margin: 8vh auto; background: #fff; padding: 24px;
+             border-radius: 12px; box-shadow: 0 2px 14px rgba(0,0,0,.08); }
+    .login h1 { font-size: 1.1rem; margin: 0 0 4px; }
+    .login p { color: #666; font-size: .85rem; margin: 0 0 16px; }
+    label { display: block; margin: 10px 0 4px; font-size: .82rem; font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc;
+                              border-radius: 8px; font-size: 1rem; font-family: inherit; }
+    button { padding: 11px 14px; background: #d71920; color: #fff; border: 0;
+             border-radius: 8px; font-weight: 700; cursor: pointer; font-size: .95rem; }
+    button[disabled] { opacity: .6; cursor: default; }
+    .login button { width: 100%; margin-top: 14px; }
+    .err { color: #8c1c1c; background: #fdecec; border: 1px solid #f2b8b8;
+           padding: 9px; border-radius: 8px; font-size: .85rem; margin-top: 12px; display: none; }
+
+    .stats { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .stat { background: #fff; border: 1px solid #e3e3e3; border-radius: 9px;
+            padding: 7px 12px; font-size: .78rem; color: #666; }
+    .stat b { display: block; font-size: 1.15rem; color: #1a1a1a; }
+
+    .card { background: #fff; border-radius: 12px; border: 1px solid #e3e3e3;
+            padding: 18px; margin-bottom: 12px; }
+    .name { font-size: 1.4rem; font-weight: 700; margin: 0 0 2px; }
+    .meta { color: #777; font-size: .8rem; margin-bottom: 12px; }
+    .tel { display: block; text-align: center; background: #d71920; color: #fff;
+           padding: 15px; border-radius: 10px; font-size: 1.5rem; font-weight: 700;
+           text-decoration: none; letter-spacing: .02em; }
+    .tel small { display: block; font-size: .7rem; font-weight: 600; opacity: .85;
+                 letter-spacing: .08em; text-transform: uppercase; margin-bottom: 3px; }
+
+    .script { background: #fffdf3; border: 1px solid #f0e4bd; border-radius: 9px;
+              padding: 13px; font-size: .9rem; line-height: 1.5; margin: 14px 0; }
+    .script b { color: #7a5c00; }
+
+    h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
+         color: #666; margin: 16px 0 8px; }
+    .outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .outcomes button { background: #fff; color: #222; border: 1px solid #ccc; font-weight: 600; }
+    .outcomes button.yes { background: #157a3a; color: #fff; border-color: #157a3a; }
+    .outcomes button.sel { outline: 3px solid #ffd4d6; border-color: #d71920; }
+
+    .shiftpick { display: none; margin-top: 12px; }
+    .shiftpick.on { display: block; }
+    .day { border: 1px solid #e3e3e3; border-radius: 9px; margin-bottom: 8px; overflow: hidden; }
+    .day-hd { background: #f7f7f8; padding: 7px 10px; font-weight: 600; font-size: .82rem; }
+    .slot { display: flex; gap: 9px; align-items: center; padding: 8px 10px;
+            border-top: 1px solid #eee; cursor: pointer; font-size: .87rem; }
+    .slot input { width: 17px; height: 17px; accent-color: #d71920; }
+    .note { color: #666; font-size: .78rem; }
+    .done { text-align: center; padding: 40px 20px; }
+    .done h2 { margin: 0 0 6px; }
+    .msg { padding: 11px; border-radius: 8px; font-size: .88rem; margin-top: 10px; display: none; }
+    .msg.ok { display: block; background: #eaf7ee; border: 1px solid #b7e0c4; color: #1c5c31; }
+    .msg.bad { display: block; background: #fdecec; border: 1px solid #f2b8b8; color: #8c1c1c; }
+    .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .topbar h1 { font-size: 1.05rem; margin: 0; flex: 1; }
+    .topbar button { background: #fff; color: #333; border: 1px solid #ddd; font-size: .8rem; }
+  </style>
+</head>
+<body>
+
+<div id="loginView" class="login">
+  <h1>Phone bank</h1>
+  <p>Campaign staff and volunteers. Sign in to start calling.</p>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username">
+  <label for="pw">Password</label>
+  <input type="password" id="pw" autocomplete="current-password"
+         onkeydown="if(event.key==='Enter')doLogin()">
+  <button id="loginBtn" onclick="doLogin()">Sign in</button>
+  <div id="loginErr" class="err"></div>
+</div>
+
+<div id="appView" class="wrap" style="display:none">
+  <div class="topbar">
+    <h1>Volunteer recruitment</h1>
+    <span class="note" id="who"></span>
+    <button onclick="doLogout()">Sign out</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div id="stage"></div>
+</div>
+
+<script>
+  var TOKEN = sessionStorage.getItem('pbToken') || '';
+  var CUR = null, OUTCOME = null, PICKED = {};
+
+  if (TOKEN) { showApp(sessionStorage.getItem('pbName') || ''); refresh(); }
+
+  window.addEventListener('beforeunload', function () {
+    if (CUR && TOKEN) google.script.run.releaseContact(TOKEN, CUR.contactId);
+  });
+
+  /* ---------- auth ---------- */
+  function doLogin() {
+    var b = document.getElementById('loginBtn');
+    b.disabled = true; b.textContent = 'Signing in…';
+    document.getElementById('loginErr').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        b.disabled = false; b.textContent = 'Sign in';
+        if (!res || !res.ok) { loginErr((res && res.error) || 'Sign-in failed.'); return; }
+        TOKEN = res.token;
+        sessionStorage.setItem('pbToken', TOKEN);
+        sessionStorage.setItem('pbName', res.name || '');
+        showApp(res.name || ''); refresh();
+      })
+      .withFailureHandler(function () {
+        b.disabled = false; b.textContent = 'Sign in';
+        loginErr('Sign-in failed. Please try again.');
+      })
+      .staffLogin(document.getElementById('email').value,
+                  document.getElementById('pw').value);
+  }
+
+  function doLogout() {
+    if (CUR) google.script.run.releaseContact(TOKEN, CUR.contactId);
+    google.script.run.staffLogout(TOKEN);
+    sessionStorage.removeItem('pbToken'); sessionStorage.removeItem('pbName');
+    location.reload();
+  }
+
+  function showApp(name) {
+    document.getElementById('loginView').style.display = 'none';
+    document.getElementById('appView').style.display = '';
+    document.getElementById('who').textContent = name || '';
+  }
+
+  function loginErr(t) {
+    var e = document.getElementById('loginErr');
+    e.textContent = t; e.style.display = 'block';
+  }
+
+  function expired(e) {
+    sessionStorage.removeItem('pbToken');
+    document.getElementById('appView').style.display = 'none';
+    document.getElementById('loginView').style.display = '';
+    loginErr((e && e.message) ? String(e.message).replace(/^Error:\s*/, '') : 'Please sign in again.');
+  }
+
+  /* ---------- flow ---------- */
+  function refresh() {
+    google.script.run.withSuccessHandler(renderStats)
+                     .withFailureHandler(function () {})
+                     .getPhonebankStats(TOKEN);
+    next();
+  }
+
+  function renderStats(s) {
+    document.getElementById('stats').innerHTML =
+      '<div class="stat"><b>' + s.remaining + '</b>left to call</div>' +
+      '<div class="stat"><b>' + s.calledToday + '</b>called today</div>' +
+      '<div class="stat"><b>' + s.booked + '</b>booked</div>' +
+      '<div class="stat"><b>' + s.total + '</b>on the list</div>';
+  }
+
+  function next() {
+    CUR = null; OUTCOME = null; PICKED = {};
+    document.getElementById('stage').innerHTML = '<div class="card note">Loading…</div>';
+    google.script.run.withSuccessHandler(renderContact)
+                     .withFailureHandler(expired)
+                     .getNextContact(TOKEN);
+  }
+
+  function renderContact(c) {
+    if (c && c.error) { document.getElementById('stage').innerHTML =
+      '<div class="card msg bad" style="display:block">' + esc(c.error) + '</div>'; return; }
+    if (!c || c.done) {
+      document.getElementById('stage').innerHTML =
+        '<div class="card done"><h2>All done 🎉</h2><p class="note">' +
+        esc((c && c.message) || 'Nobody left to call.') + '</p></div>';
+      return;
+    }
+    CUR = c;
+
+    var h = '<div class="card">' +
+      '<p class="name">' + esc(c.first + ' ' + c.last) + '</p>' +
+      '<p class="meta">' + esc(c.source ? 'From: ' + c.source : '') +
+        (c.postal ? ' · ' + esc(c.postal) : '') +
+        (c.attempts ? ' · ' + c.attempts + ' previous attempt' + (c.attempts > 1 ? 's' : '') : '') +
+      '</p>' +
+      '<a class="tel" href="tel:' + esc(c.phone) + '"><small>Tap to call</small>' + esc(c.phone) + '</a>' +
+      (c.notes ? '<p class="note" style="margin-top:10px;white-space:pre-line">' + esc(c.notes) + '</p>' : '') +
+      '<div class="script">' +
+        '<b>Hi ' + esc(c.first) + ', it\'s [your name] calling from the ' +
+        'Heino Doessing campaign.</b> You signed up to support us — thank you! ' +
+        'We\'re getting teams out knocking on doors, and I\'m calling to see if you could ' +
+        'join us for a shift. It\'s about two hours, you go out in pairs, and we train you first. ' +
+        '<b>Would any of these work for you?</b>' +
+      '</div>' +
+
+      '<h3>How did it go?</h3>' +
+      '<div class="outcomes">' +
+        '<button class="yes" onclick="pick(\'booked\',this)">✓ Yes — book a shift</button>' +
+        '<button onclick="pick(\'maybe\',this)">Maybe later</button>' +
+        '<button onclick="pick(\'noanswer\',this)">No answer</button>' +
+        '<button onclick="pick(\'callback\',this)">Call back</button>' +
+        '<button onclick="pick(\'declined\',this)">Not interested</button>' +
+        '<button onclick="pick(\'wrong\',this)">Wrong number</button>' +
+      '</div>' +
+
+      '<div id="pickWrap" class="shiftpick"><h3>Which shifts?</h3><div id="shifts"></div></div>' +
+
+      '<div id="cbWrap" style="display:none"><label for="cbAt">Call back when?</label>' +
+        '<input type="datetime-local" id="cbAt"></div>' +
+
+      '<h3>Notes</h3><textarea id="notes" rows="2" placeholder="Anything worth remembering"></textarea>' +
+
+      '<div style="display:flex;gap:8px;margin-top:14px">' +
+        '<button id="saveBtn" style="flex:1" onclick="save()">Save &amp; next</button>' +
+        '<button style="background:#fff;color:#555;border:1px solid #ccc" onclick="skip()">Skip</button>' +
+      '</div>' +
+      '<div id="m" class="msg"></div>' +
+    '</div>';
+
+    document.getElementById('stage').innerHTML = h;
+    renderShifts(c.shifts || []);
+  }
+
+  function renderShifts(days) {
+    var el = document.getElementById('shifts');
+    if (!days.length) { el.innerHTML = '<p class="note">No shifts available to book.</p>'; return; }
+    var h = '';
+    days.forEach(function (d) {
+      h += '<div class="day"><div class="day-hd">' + esc(d.label) + '</div>';
+      d.shifts.forEach(function (s) {
+        h += '<label class="slot"><input type="checkbox" value="' + esc(s.shiftId) +
+             '" onchange="tog(this)"><span>' + esc(s.label) +
+             (s.tight ? ' <span class="note">(' + s.remaining + ' left)</span>' : '') +
+             '</span></label>';
+      });
+      h += '</div>';
+    });
+    el.innerHTML = h;
+  }
+
+  function tog(cb) { if (cb.checked) PICKED[cb.value] = true; else delete PICKED[cb.value]; }
+
+  function pick(o, btn) {
+    OUTCOME = o;
+    var all = document.querySelectorAll('.outcomes button');
+    for (var i = 0; i < all.length; i++) all[i].classList.remove('sel');
+    btn.classList.add('sel');
+    document.getElementById('pickWrap').className = 'shiftpick' + (o === 'booked' ? ' on' : '');
+    document.getElementById('cbWrap').style.display = (o === 'callback') ? 'block' : 'none';
+  }
+
+  function save() {
+    if (!OUTCOME) { msg('Pick an outcome first.', 'bad'); return; }
+    var ids = Object.keys(PICKED);
+    if (OUTCOME === 'booked' && !ids.length) { msg('Choose at least one shift.', 'bad'); return; }
+
+    var b = document.getElementById('saveBtn');
+    b.disabled = true; b.textContent = 'Saving…';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (!res || !res.ok) {
+          b.disabled = false; b.textContent = 'Save & next';
+          msg((res && res.error) || 'Could not save.', 'bad');
+          return;
+        }
+        refresh();
+      })
+      .withFailureHandler(function (e) {
+        b.disabled = false; b.textContent = 'Save & next';
+        msg('Could not save. Please try again.', 'bad');
+      })
+      .saveCallOutcome(TOKEN, {
+        contactId: CUR.contactId,
+        outcome: OUTCOME,
+        shiftIds: ids,
+        notes: document.getElementById('notes').value,
+        callbackAt: (document.getElementById('cbAt') || {}).value || ''
+      });
+  }
+
+  function skip() {
+    google.script.run.withSuccessHandler(next).withFailureHandler(next)
+                     .releaseContact(TOKEN, CUR.contactId);
+  }
+
+  function msg(t, cls) {
+    var m = document.getElementById('m');
+    m.className = 'msg ' + cls; m.textContent = t;
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+</script>
+</body>
+</html>

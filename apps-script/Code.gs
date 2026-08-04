@@ -94,6 +94,13 @@ function doGet(e) {
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   }
 
+  // Staff phone bank — same story: public shell, every data call requires a login.
+  if (p.view === 'phonebank') {
+    return HtmlService.createTemplateFromFile('Phonebank').evaluate()
+      .setTitle('Phone bank — ' + CAMPAIGN)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
+
   // Public canvass shift signup
   if (p.form === 'shift') {
     const t = HtmlService.createTemplateFromFile('Shift');
