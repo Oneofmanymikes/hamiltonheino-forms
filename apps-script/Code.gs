@@ -84,7 +84,29 @@ const FORMS = {
 
 /*** 3) SERVE THE FORM (GET) ***/
 function doGet(e) {
-  const key = (e && e.parameter && e.parameter.form) || 'vote';
+  const p = (e && e.parameter) || {};
+
+  // Staff shift tracker — the page itself is public, but every data call inside
+  // it requires a login (see Auth.gs). Serving the shell without a session is fine.
+  if (p.view === 'week') {
+    return HtmlService.createTemplateFromFile('Week').evaluate()
+      .setTitle('Shift tracker — ' + CAMPAIGN)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
+
+  // Public canvass shift signup
+  if (p.form === 'shift') {
+    const t = HtmlService.createTemplateFromFile('Shift');
+    t.campaign = CAMPAIGN;
+    t.accent = ACCENT;
+    t.consentLabel = CONSENT_LABEL;
+    return t.evaluate()
+      .setTitle('Sign up to canvass — ' + CAMPAIGN)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  const key = p.form || 'vote';
   const def = FORMS[key] || FORMS.vote;
   const t = HtmlService.createTemplateFromFile('Form');
   t.form = key;

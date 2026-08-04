@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root { --accent: <?= accent ?>; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+           margin: 0; padding: 16px; color: #1a1a1a; background: #fff; }
+    .wrap { max-width: 560px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 0 0 6px; }
+    .blurb { color: #555; font-size: .92rem; margin: 0 0 18px; }
+    h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+         color: #666; margin: 22px 0 8px; }
+
+    .day { border: 1px solid #e3e3e3; border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+    .day-hd { background: #f7f7f8; padding: 9px 12px; font-weight: 600; font-size: .9rem; }
+    .slot { display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+            border-top: 1px solid #eee; cursor: pointer; }
+    .slot:hover { background: #fafafa; }
+    .slot input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+    .slot-main { flex: 1; }
+    .slot-time { font-weight: 600; font-size: .95rem; }
+    .slot-desc { color: #666; font-size: .8rem; }
+    .tight { color: var(--accent); font-size: .78rem; font-weight: 600; }
+
+    label.f { display: block; margin: 12px 0 4px; font-size: .85rem; font-weight: 600; }
+    input[type=text], input[type=email], input[type=tel] {
+      width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+    .chk { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0;
+           font-size: .84rem; color: #333; }
+    .chk input { margin-top: 2px; accent-color: var(--accent); }
+    button { width: 100%; margin-top: 8px; padding: 13px; background: var(--accent);
+             color: #fff; border: 0; border-radius: 8px; font-size: 1rem;
+             font-weight: 700; cursor: pointer; }
+    button[disabled] { opacity: .6; cursor: default; }
+    .msg { margin-top: 14px; padding: 12px; border-radius: 8px; font-size: .9rem; display: none; }
+    .msg.ok { display: block; background: #eaf7ee; border: 1px solid #b7e0c4; color: #1c5c31; }
+    .msg.err { display: block; background: #fdecec; border: 1px solid #f2b8b8; color: #8c1c1c; }
+    .empty { color: #666; font-size: .9rem; padding: 14px; background: #f7f7f8; border-radius: 8px; }
+    .hp { position: absolute; left: -9999px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Sign up to canvass</h1>
+  <p class="blurb">Knocking on doors is how we win. Pick whichever shifts work for you &mdash; you can choose more than one.</p>
+
+  <form id="f" autocomplete="on">
+    <input class="hp" type="text" name="_hp" id="_hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+    <h2>Choose your shifts</h2>
+    <div id="slots"><p class="empty">Loading available shifts&hellip;</p></div>
+
+    <h2>Your details</h2>
+    <label class="f" for="first">First name</label>
+    <input type="text" id="first" name="first" required>
+
+    <label class="f" for="last">Last name</label>
+    <input type="text" id="last" name="last" required>
+
+    <label class="f" for="email">Email</label>
+    <input type="email" id="email" name="email" required>
+
+    <label class="f" for="phone">Phone</label>
+    <input type="tel" id="phone" name="phone" required>
+
+    <label class="f" for="postal">Postal code</label>
+    <input type="text" id="postal" name="postal">
+
+    <label class="chk"><input type="checkbox" id="consent" required> <span><?= consentLabel ?></span></label>
+
+    <button id="btn" type="button" onclick="submitShift()">Sign Me Up</button>
+  </form>
+
+  <!-- outside the form: the success handler hides the form, which would hide this too -->
+  <div id="msg" class="msg"></div>
+</div>
+
+<script>
+  var CHOSEN = {};
+
+  google.script.run.withSuccessHandler(renderSlots)
+                   .withFailureHandler(function () {
+                     document.getElementById('slots').innerHTML =
+                       '<p class="empty">Could not load shifts. Please refresh the page.</p>';
+                   })
+                   .listOpenShifts(21);
+
+  function renderSlots(days) {
+    var el = document.getElementById('slots');
+    if (!days || !days.length) {
+      el.innerHTML = '<p class="empty">No shifts are posted yet. Please check back soon, ' +
+                     'or email us and we will let you know as soon as they are up.</p>';
+      return;
+    }
+    var html = '';
+    days.forEach(function (d) {
+      html += '<div class="day"><div class="day-hd">' + esc(d.label) + '</div>';
+      d.shifts.forEach(function (s) {
+        html += '<label class="slot">' +
+                  '<input type="checkbox" value="' + esc(s.shiftId) + '" onchange="toggle(this)">' +
+                  '<span class="slot-main">' +
+                    '<span class="slot-time">' + esc(s.label) + '</span><br>' +
+                    '<span class="slot-desc">' + esc(s.desc) + '</span>' +
+                  '</span>' +
+                  (s.tight ? '<span class="tight">' + s.remaining + ' left</span>' : '') +
+                '</label>';
+      });
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  function toggle(cb) {
+    if (cb.checked) CHOSEN[cb.value] = true; else delete CHOSEN[cb.value];
+  }
+
+  function submitShift() {
+    var f = document.getElementById('f');
+    var ids = Object.keys(CHOSEN);
+    if (!ids.length) { showErr('Please choose at least one shift.'); return; }
+    if (!f.checkValidity()) { f.reportValidity(); return; }
+    if (!document.getElementById('consent').checked) { showErr('Please agree to be contacted.'); return; }
+
+    var btn = document.getElementById('btn');
+    btn.disabled = true; btn.textContent = 'Sending…';
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (!res || !res.ok) {
+          btn.disabled = false; btn.textContent = 'Try again';
+          showErr((res && res.error) || 'Sorry, something went wrong.');
+          return;
+        }
+        f.style.display = 'none';
+        var m = document.getElementById('msg');
+        m.className = 'msg ok';
+        m.innerHTML = '<strong>You are signed up. Thank you!</strong><br>' +
+          (res.booked || []).map(esc).join('<br>') +
+          '<br><br>We have emailed you a confirmation. Someone from the campaign ' +
+          'will be in touch before your first shift.';
+      })
+      .withFailureHandler(function () {
+        btn.disabled = false; btn.textContent = 'Try again';
+        showErr('Sorry, something went wrong. Please try again.');
+      })
+      .submitShiftSignup({
+        _hp: document.getElementById('_hp').value,
+        first: document.getElementById('first').value,
+        last: document.getElementById('last').value,
+        email: document.getElementById('email').value,
+        phone: document.getElementById('phone').value,
+        postal: document.getElementById('postal').value,
+        consent: true,
+        shiftIds: ids
+      });
+  }
+
+  function showErr(t) {
+    var m = document.getElementById('msg');
+    m.className = 'msg err'; m.textContent = t;
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+</script>
+</body>
+</html>

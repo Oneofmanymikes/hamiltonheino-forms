@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+           margin: 0; padding: 18px; color: #1a1a1a; background: #f6f6f7; }
+    .wrap { max-width: 1200px; margin: 0 auto; }
+
+    /* login */
+    .login { max-width: 340px; margin: 8vh auto; background: #fff; padding: 24px;
+             border-radius: 12px; box-shadow: 0 2px 14px rgba(0,0,0,.08); }
+    .login h1 { font-size: 1.1rem; margin: 0 0 4px; }
+    .login p { color: #666; font-size: .85rem; margin: 0 0 16px; }
+    label { display: block; margin: 10px 0 4px; font-size: .82rem; font-weight: 600; }
+    input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+    button { padding: 11px 16px; background: #d71920; color: #fff; border: 0;
+             border-radius: 8px; font-weight: 700; cursor: pointer; font-size: .95rem; }
+    button[disabled] { opacity: .6; cursor: default; }
+    .login button { width: 100%; margin-top: 14px; }
+    .err { color: #8c1c1c; background: #fdecec; border: 1px solid #f2b8b8;
+           padding: 9px; border-radius: 8px; font-size: .85rem; margin-top: 12px; display: none; }
+
+    /* tracker */
+    .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .bar h1 { font-size: 1.15rem; margin: 0; flex: 1; }
+    .bar .who { font-size: .82rem; color: #666; }
+    .nav { background: #fff; border: 1px solid #ddd; color: #333; }
+    .grid { display: grid; grid-template-columns: repeat(7, minmax(150px, 1fr));
+            gap: 8px; overflow-x: auto; }
+    .col { background: #fff; border-radius: 10px; border: 1px solid #e3e3e3; min-width: 150px; }
+    .col-hd { padding: 8px 10px; font-weight: 700; font-size: .82rem;
+              border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .col-hd .n { color: #666; font-weight: 600; }
+    .today .col-hd { background: #fff4f4; color: #b3151b; }
+    .slot { padding: 8px 10px; border-bottom: 1px solid #f2f2f2; }
+    .slot:last-child { border-bottom: 0; }
+    .slot-t { font-size: .76rem; font-weight: 700; color: #444;
+              display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .cap { font-weight: 600; color: #888; }
+    .cap.full { color: #b3151b; }
+    .p { font-size: .8rem; padding: 3px 0; border-bottom: 1px dotted #eee; }
+    .p:last-child { border-bottom: 0; }
+    .p a { color: #555; text-decoration: none; font-size: .74rem; }
+    .none { font-size: .76rem; color: #aaa; font-style: italic; }
+    .totals { margin-top: 14px; font-size: .85rem; color: #555; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div id="loginView" class="login">
+  <h1>Shift tracker</h1>
+  <p>Campaign staff only. Sign in to see who is signed up.</p>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username">
+  <label for="pw">Password</label>
+  <input type="password" id="pw" autocomplete="current-password"
+         onkeydown="if(event.key==='Enter')doLogin()">
+  <button id="loginBtn" onclick="doLogin()">Sign in</button>
+  <div id="loginErr" class="err"></div>
+</div>
+
+<div id="appView" class="wrap" style="display:none">
+  <div class="bar">
+    <h1 id="range">Week of &hellip;</h1>
+    <span class="who" id="who"></span>
+    <button class="nav" onclick="move(-7)">&larr; Prev</button>
+    <button class="nav" onclick="thisWeek()">This week</button>
+    <button class="nav" onclick="move(7)">Next &rarr;</button>
+    <button class="nav" onclick="doLogout()">Sign out</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <p class="totals" id="totals"></p>
+</div>
+
+<script>
+  var TOKEN = sessionStorage.getItem('shiftToken') || '';
+  var START = null;
+
+  if (TOKEN) { showApp(sessionStorage.getItem('shiftName') || ''); load(null); }
+
+  function doLogin() {
+    var btn = document.getElementById('loginBtn');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    hideErr();
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = 'Sign in';
+        if (!res || !res.ok) { showErr((res && res.error) || 'Sign-in failed.'); return; }
+        TOKEN = res.token;
+        sessionStorage.setItem('shiftToken', TOKEN);
+        sessionStorage.setItem('shiftName', res.name || '');
+        showApp(res.name || '');
+        load(null);
+      })
+      .withFailureHandler(function () {
+        btn.disabled = false; btn.textContent = 'Sign in';
+        showErr('Sign-in failed. Please try again.');
+      })
+      .staffLogin(document.getElementById('email').value,
+                  document.getElementById('pw').value);
+  }
+
+  function doLogout() {
+    google.script.run.staffLogout(TOKEN);
+    sessionStorage.removeItem('shiftToken');
+    sessionStorage.removeItem('shiftName');
+    location.reload();
+  }
+
+  function showApp(name) {
+    document.getElementById('loginView').style.display = 'none';
+    document.getElementById('appView').style.display = '';
+    document.getElementById('who').textContent = name ? 'Signed in as ' + name : '';
+  }
+
+  function load(start) {
+    google.script.run
+      .withSuccessHandler(render)
+      .withFailureHandler(function (e) {
+        // an expired session lands here — bounce back to the login screen
+        sessionStorage.removeItem('shiftToken');
+        document.getElementById('appView').style.display = 'none';
+        document.getElementById('loginView').style.display = '';
+        showErr((e && e.message) ? String(e.message).replace(/^Error:\s*/, '') : 'Please sign in again.');
+      })
+      .getWeekGrid(start, TOKEN);
+  }
+
+  function move(delta) {
+    var d = new Date(START + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    load(ymd(d));
+  }
+
+  function thisWeek() { load(null); }
+
+  function render(data) {
+    START = data.start;
+    var todayStr = ymd(new Date());
+    var grand = 0;
+
+    document.getElementById('range').textContent =
+      'Week of ' + new Date(data.start + 'T00:00:00')
+        .toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+
+    var html = '';
+    data.days.forEach(function (day) {
+      grand += day.total;
+      html += '<div class="col' + (day.date === todayStr ? ' today' : '') + '">' +
+                '<div class="col-hd"><span>' + esc(day.label) + '</span>' +
+                '<span class="n">' + day.total + '</span></div>';
+      if (!day.slots.length) {
+        html += '<div class="slot"><span class="none">No shifts</span></div>';
+      }
+      day.slots.forEach(function (s) {
+        var full = s.capacity > 0 && s.people.length >= s.capacity;
+        html += '<div class="slot">' +
+                  '<div class="slot-t"><span>' + esc(s.label) + '</span>' +
+                  '<span class="cap' + (full ? ' full' : '') + '">' + s.people.length +
+                  (s.capacity > 0 ? '/' + s.capacity : '') + '</span></div>';
+        if (!s.people.length) {
+          html += '<div class="none">nobody yet</div>';
+        } else {
+          s.people.forEach(function (p) {
+            html += '<div class="p">' + esc(p.first + ' ' + p.last) +
+                    (p.phone ? '<br><a href="tel:' + esc(p.phone) + '">' + esc(p.phone) + '</a>' : '') +
+                    '</div>';
+          });
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+
+    document.getElementById('grid').innerHTML = html;
+    document.getElementById('totals').textContent =
+      grand + (grand === 1 ? ' signup' : ' signups') + ' this week.';
+  }
+
+  function ymd(d) {
+    return d.getFullYear() + '-' +
+           ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
+           ('0' + d.getDate()).slice(-2);
+  }
+
+  function showErr(t) {
+    var e = document.getElementById('loginErr');
+    e.textContent = t; e.style.display = 'block';
+  }
+  function hideErr() { document.getElementById('loginErr').style.display = 'none'; }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+</script>
+</body>
+</html>
