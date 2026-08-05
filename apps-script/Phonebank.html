@@ -32,11 +32,16 @@
             padding: 18px; margin-bottom: 12px; }
     .name { font-size: 1.4rem; font-weight: 700; margin: 0 0 2px; }
     .meta { color: #777; font-size: .8rem; margin-bottom: 12px; }
-    .tel { display: block; text-align: center; background: #d71920; color: #fff;
-           padding: 15px; border-radius: 10px; font-size: 1.5rem; font-weight: 700;
-           text-decoration: none; letter-spacing: .02em; }
-    .tel small { display: block; font-size: .7rem; font-weight: 600; opacity: .85;
-                 letter-spacing: .08em; text-transform: uppercase; margin-bottom: 3px; }
+    /* The number is shown, not dialled — most callers are at a desk with a
+       handset or a mobile in hand, and a tel: link does nothing on a desktop. */
+    .tel { text-align: center; background: #f7f7f8; border: 2px solid #d71920;
+           color: #1a1a1a; padding: 14px; border-radius: 10px; }
+    .tel small { display: block; font-size: .68rem; font-weight: 700; color: #888;
+                 letter-spacing: .09em; text-transform: uppercase; margin-bottom: 5px; }
+    .telnum { font-size: 2rem; font-weight: 700; letter-spacing: .04em;
+              user-select: all; -webkit-user-select: all; font-variant-numeric: tabular-nums; }
+    .copy { margin-top: 8px; background: #fff; color: #444; border: 1px solid #ccc;
+            font-size: .78rem; padding: 6px 12px; }
 
     .script { background: #fffdf3; border: 1px solid #f0e4bd; border-radius: 9px;
               padding: 13px; font-size: .9rem; line-height: 1.5; margin: 14px 0; }
@@ -179,7 +184,13 @@
     if (!c || c.done) {
       document.getElementById('stage').innerHTML =
         '<div class="card done"><h2>All done 🎉</h2><p class="note">' +
-        esc((c && c.message) || 'Nobody left to call.') + '</p></div>';
+        esc((c && c.message) || 'Nobody left to call.') + '</p>' +
+        ((c && c.skippedCount)
+          ? '<button class="copy" style="margin-top:12px" onclick="unskip()">' +
+            'Bring back my ' + c.skippedCount + ' skipped contact' +
+            (c.skippedCount === 1 ? '' : 's') + '</button>'
+          : '') +
+        '</div>';
       return;
     }
     CUR = c;
@@ -190,7 +201,10 @@
         (c.postal ? ' · ' + esc(c.postal) : '') +
         (c.attempts ? ' · ' + c.attempts + ' previous attempt' + (c.attempts > 1 ? 's' : '') : '') +
       '</p>' +
-      '<a class="tel" href="tel:' + esc(c.phone) + '"><small>Tap to call</small>' + esc(c.phone) + '</a>' +
+      '<div class="tel"><small>Call this number</small>' +
+        '<div class="telnum" id="num">' + esc(c.phone) + '</div>' +
+        '<button class="copy" onclick="copyNum()">Copy number</button>' +
+      '</div>' +
       (c.notes ? '<p class="note" style="margin-top:10px;white-space:pre-line">' + esc(c.notes) + '</p>' : '') +
       '<div class="script">' +
         '<b>Hi ' + esc(c.first) + ', it\'s [your name] calling from the ' +
@@ -287,8 +301,42 @@
   }
 
   function skip() {
+    // skipContact, not releaseContact: releasing alone puts them straight back
+    // at the top of the queue, so the skip has to be remembered server-side.
     google.script.run.withSuccessHandler(next).withFailureHandler(next)
-                     .releaseContact(TOKEN, CUR.contactId);
+                     .skipContact(TOKEN, CUR.contactId);
+  }
+
+  function unskip() {
+    google.script.run.withSuccessHandler(function () { refresh(); })
+                     .withFailureHandler(function () { refresh(); })
+                     .clearMySkips(TOKEN);
+  }
+
+  function copyNum() {
+    var n = document.getElementById('num');
+    if (!n) return;
+    var t = n.textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(flashCopied, selectNum);
+    } else {
+      selectNum();
+    }
+  }
+
+  function selectNum() {
+    var n = document.getElementById('num');
+    if (!n) return;
+    var r = document.createRange(); r.selectNodeContents(n);
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+
+  function flashCopied() {
+    var b = document.querySelector('.copy');
+    if (!b) return;
+    var old = b.textContent;
+    b.textContent = 'Copied ✓';
+    setTimeout(function () { b.textContent = old; }, 1500);
   }
 
   function msg(t, cls) {

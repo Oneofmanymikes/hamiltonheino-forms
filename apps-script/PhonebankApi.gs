@@ -235,11 +235,13 @@ function getNextContact(token) {
     const data = cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS).getValues();
     const now = new Date();
     const staleBefore = new Date(now.getTime() - CLAIM_MINUTES * 60000);
+    const skipped = loadSkips_(user.email);
 
     let bestRow = -1, bestScore = -1;
     for (let i = 0; i < data.length; i++) {
       const r = data[i];
       if (!r[CL_ID - 1]) continue;
+      if (skipped[String(r[CL_ID - 1])]) continue;      // this caller skipped them
 
       const status = String(r[CL_STATUS - 1] || CS_NEW);
       if ([CS_BOOKED, CS_DECLINED, CS_WRONG, CS_DNC].indexOf(status) !== -1) continue;
@@ -271,7 +273,13 @@ function getNextContact(token) {
     }
 
     if (bestRow === -1) {
-      return { done: true, message: 'Nobody left to call right now. Great work!' };
+      const nSkipped = Object.keys(skipped).length;
+      return { done: true,
+               skippedCount: nSkipped,
+               message: nSkipped
+                 ? 'Nobody left to call. You skipped ' + nSkipped + ' contact' +
+                   (nSkipped === 1 ? '' : 's') + ' — you can bring them back below.'
+                 : 'Nobody left to call right now. Great work!' };
     }
 
     cl.getRange(bestRow, CL_CLAIMED_BY).setValue(user.email);
@@ -380,6 +388,51 @@ function releaseContact(token, contactId) {
   return { ok: true };
 }
 
+/**
+ * Skip a contact for good (for this caller).
+ *
+ * Releasing alone is not enough: the contact keeps its status and priority, so
+ * the very next getNextContact would hand back the same person. The skip is
+ * therefore recorded per caller in Script Properties, which survives reloads
+ * and new sessions. Other callers still see the contact — one person skipping
+ * is not a decision for the whole team. To actually remove someone from the
+ * list for everyone, use the "Not interested" or "Do not call" outcome instead.
+ */
+function skipContact(token, contactId) {
+  const user = requireStaff_(token);
+  if (contactId) {
+    const key = skipKey_(user.email);
+    const props = PropertiesService.getScriptProperties();
+    let ids = [];
+    try { ids = JSON.parse(props.getProperty(key) || '[]'); } catch (err) { ids = []; }
+    if (ids.indexOf(String(contactId)) === -1) ids.push(String(contactId));
+    // Keep it bounded — Script Properties values cap at ~9KB.
+    if (ids.length > 400) ids = ids.slice(ids.length - 400);
+    props.setProperty(key, JSON.stringify(ids));
+  }
+  releaseContact(token, contactId);
+  return { ok: true };
+}
+
+/** Bring this caller's skipped contacts back into their queue. */
+function clearMySkips(token) {
+  const user = requireStaff_(token);
+  PropertiesService.getScriptProperties().deleteProperty(skipKey_(user.email));
+  return { ok: true, message: 'Skipped contacts are back in your queue.' };
+}
+
+function skipKey_(email) { return 'skip_' + String(email).toLowerCase(); }
+
+function loadSkips_(email) {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(skipKey_(email));
+    const arr = JSON.parse(raw || '[]');
+    const set = {};
+    arr.forEach(function (id) { set[String(id)] = true; });
+    return set;
+  } catch (err) { return {}; }
+}
+
 /** Counts for the header strip. */
 function getPhonebankStats(token) {
   requireStaff_(token);
@@ -399,6 +452,64 @@ function getPhonebankStats(token) {
     if (lc instanceof Date && lc >= today) out.calledToday++;
   });
   return out;
+}
+
+/**
+ * Admin overview of the call list: how many sit at each status, and the most
+ * recent calls with who made them. Lets the campaign see results without
+ * opening the spreadsheet.
+ */
+function adminCallListSummary(token) {
+  requireAdmin_(token);
+  const cl = ensureCallListSheet_(SpreadsheetApp.openById(SHEET_ID));
+  const out = { byStatus: {}, bySource: {}, recent: [], total: 0 };
+  if (cl.getLastRow() < 2) return out;
+
+  const tz = Session.getScriptTimeZone();
+  const rows = cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS).getValues();
+  const called = [];
+
+  rows.forEach(function (r) {
+    if (!r[CL_ID - 1]) return;
+    out.total++;
+    const st = String(r[CL_STATUS - 1] || CS_NEW);
+    out.byStatus[st] = (out.byStatus[st] || 0) + 1;
+    const src = String(r[CL_SOURCE - 1] || '?');
+    out.bySource[src] = (out.bySource[src] || 0) + 1;
+    if (r[CL_LAST_CALLED - 1] instanceof Date) {
+      called.push({
+        when: r[CL_LAST_CALLED - 1],
+        contactId: r[CL_ID - 1],
+        name: String(r[CL_FIRST - 1] || '') + ' ' + String(r[CL_LAST - 1] || ''),
+        status: st,
+        by: String(r[CL_LAST_BY - 1] || ''),
+        attempts: Number(r[CL_ATTEMPTS - 1] || 0)
+      });
+    }
+  });
+
+  called.sort(function (a, b) { return b.when - a.when; });
+  out.recent = called.slice(0, 25).map(function (c) {
+    c.when = Utilities.formatDate(c.when, tz, 'EEE MMM d, h:mm a');
+    return c;
+  });
+  return out;
+}
+
+/**
+ * Put a contact back to untouched — clears status, attempts, call history and
+ * any claim. For undoing a mis-click, or resetting after testing.
+ */
+function adminResetContact(token, contactId) {
+  requireAdmin_(token);
+  const cl = ensureCallListSheet_(SpreadsheetApp.openById(SHEET_ID));
+  const row = findCallRow_(cl, contactId);
+  if (row === -1) return { ok: false, error: 'No contact with that ID.' };
+  cl.getRange(row, CL_STATUS).setValue(CS_NEW);
+  cl.getRange(row, CL_ATTEMPTS).setValue(0);
+  [CL_LAST_CALLED, CL_LAST_BY, CL_CALLBACK_AT, CL_CLAIMED_BY, CL_CLAIMED_AT, CL_BOOKED]
+    .forEach(function (c) { cl.getRange(row, c).setValue(''); });
+  return { ok: true, message: 'Reset ' + contactId + ' to New.' };
 }
 
 /*** HELPERS ***/

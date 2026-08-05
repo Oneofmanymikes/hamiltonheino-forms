@@ -43,7 +43,8 @@
     .cap.full { color: #b3151b; }
     .p { font-size: .8rem; padding: 3px 0; border-bottom: 1px dotted #eee; }
     .p:last-child { border-bottom: 0; }
-    .p a { color: #555; text-decoration: none; font-size: .74rem; }
+    .p .ph { color: #555; font-size: .74rem; user-select: all; -webkit-user-select: all;
+             font-variant-numeric: tabular-nums; }
     .none { font-size: .76rem; color: #aaa; font-style: italic; }
     .totals { margin-top: 14px; font-size: .85rem; color: #555; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
@@ -167,7 +168,7 @@
         } else {
           s.people.forEach(function (p) {
             html += '<div class="p">' + esc(p.first + ' ' + p.last) +
-                    (p.phone ? '<br><a href="tel:' + esc(p.phone) + '">' + esc(p.phone) + '</a>' : '') +
+                    (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') +
                     '</div>';
           });
         }
