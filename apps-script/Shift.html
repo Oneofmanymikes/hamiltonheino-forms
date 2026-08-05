@@ -31,6 +31,8 @@
     .chk { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0;
            font-size: .84rem; color: #333; }
     .chk input { margin-top: 2px; accent-color: var(--accent); }
+    .known { display: none; margin: 8px 0 0; padding: 9px 11px; border-radius: 8px;
+             background: #eaf7ee; border: 1px solid #b7e0c4; color: #1c5c31; font-size: .85rem; }
     button { width: 100%; margin-top: 8px; padding: 13px; background: var(--accent);
              color: #fff; border: 0; border-radius: 8px; font-size: 1rem;
              font-weight: 700; cursor: pointer; }
@@ -54,6 +56,16 @@
     <div id="slots"><p class="empty">Loading available shifts&hellip;</p></div>
 
     <h2>Your details</h2>
+
+    <!-- Phone first: a returning volunteer is recognised and skips the rest. -->
+    <div id="phoneStep">
+      <label class="f" for="phone">Phone number</label>
+      <input type="tel" id="phone" name="phone" required
+             placeholder="(905) 555-0142" onblur="checkPhone()">
+      <p class="known" id="known"></p>
+    </div>
+
+    <div id="detailStep">
     <label class="f" for="first">First name</label>
     <input type="text" id="first" name="first" required>
 
@@ -63,11 +75,9 @@
     <label class="f" for="email">Email</label>
     <input type="email" id="email" name="email" required>
 
-    <label class="f" for="phone">Phone</label>
-    <input type="tel" id="phone" name="phone" required>
-
     <label class="f" for="postal">Postal code</label>
     <input type="text" id="postal" name="postal">
+    </div>
 
     <label class="chk"><input type="checkbox" id="consent" required> <span><?= consentLabel ?></span></label>
 
@@ -115,6 +125,39 @@
 
   function toggle(cb) {
     if (cb.checked) CHOSEN[cb.value] = true; else delete CHOSEN[cb.value];
+  }
+
+  /* Phone recognition: if we already have this person, hide the name/email
+     fields and greet them. The server fills the rest in on submit — it is
+     never sent to the browser. */
+  var KNOWN = false;
+  function checkPhone() {
+    var v = document.getElementById('phone').value.replace(/\D/g, '');
+    if (v.length < 10) { setKnown(false, ''); return; }
+    google.script.run
+      .withSuccessHandler(function (r) { setKnown(!!(r && r.found), (r && r.first) || ''); })
+      .withFailureHandler(function () { setKnown(false, ''); })
+      .lookupByPhone(v);
+  }
+
+  function setKnown(found, first) {
+    KNOWN = found;
+    var d = document.getElementById('detailStep');
+    var k = document.getElementById('known');
+    if (found) {
+      d.style.display = 'none';
+      ['first', 'last', 'email'].forEach(function (id) {
+        document.getElementById(id).required = false;
+      });
+      k.textContent = 'Welcome back, ' + first + '! We have your details — just pick your shifts.';
+      k.style.display = 'block';
+    } else {
+      d.style.display = '';
+      ['first', 'last', 'email'].forEach(function (id) {
+        document.getElementById(id).required = true;
+      });
+      k.style.display = 'none';
+    }
   }
 
   function submitShift() {

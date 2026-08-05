@@ -133,6 +133,29 @@ function staffLogin(email, password) {
   return { ok: true, token: token, name: session.name, role: session.role };
 }
 
+/** Who is this token? Lets a page restore a session on reload without re-login. */
+function whoAmI(token) {
+  const s = requireStaff_(token);
+  return { ok: true, email: s.email, name: s.name, role: s.role, token: token };
+}
+
+/**
+ * Bootstrap the one super user. Run ONCE from the Apps Script editor:
+ *     createFirstAdmin('you@voteheino.ca', 'Your Name', 'a-good-password')
+ * Refuses to run if any admin already exists, so it can't be used to sneak in
+ * a second super user later — after this, admins are made in the web console.
+ */
+function createFirstAdmin(email, name, password) {
+  const existing = listStaffUsers().filter(function (u) {
+    return String(u.role).toLowerCase() === 'admin';
+  });
+  if (existing.length) {
+    throw new Error('An admin already exists (' + existing[0].email +
+                    '). Use the Manage accounts page instead.');
+  }
+  return createStaffUser(email, name, 'admin', password);
+}
+
 function staffLogout(token) {
   if (!token) return { ok: true };
   CacheService.getScriptCache().remove('sess_' + token);
@@ -193,6 +216,115 @@ function purgeExpiredSessions() {
     } catch (err) { props.deleteProperty(k); removed++; }
   });
   return { removed: removed };
+}
+
+/*** SELF-REGISTRATION ***/
+/*
+ * Volunteers create their own accounts by entering a shared access code, so
+ * nobody has to be in the loop. The code lives in Script Properties under
+ * SIGNUP_CODE (Project Settings ▸ Script Properties). NO CODE SET = REGISTRATION
+ * CLOSED — that's the safe default, and clearing the property shuts it off again.
+ *
+ * Self-registered accounts are always role 'staff' (can use the tracker and the
+ * phone bank). Only an existing admin can mint another admin.
+ */
+
+function signupEnabled() {
+  return !!PropertiesService.getScriptProperties().getProperty('SIGNUP_CODE');
+}
+
+/** Set/replace the shared access code. Run from the editor, or use the admin page. */
+function setSignupCode(code) {
+  const props = PropertiesService.getScriptProperties();
+  if (!code) { props.deleteProperty('SIGNUP_CODE'); return 'Self-registration is now CLOSED.'; }
+  if (String(code).length < 6) throw new Error('Use at least 6 characters.');
+  props.setProperty('SIGNUP_CODE', String(code));
+  return 'Self-registration is OPEN. Access code: ' + code;
+}
+
+/** Create your own account. Returns {ok:true, token, ...} so you land signed in. */
+function selfRegister(name, email, password, accessCode) {
+  const want = PropertiesService.getScriptProperties().getProperty('SIGNUP_CODE');
+  if (!want) return { ok: false, error: 'Account sign-up is closed. Ask the campaign for a login.' };
+
+  email = String(email || '').trim().toLowerCase();
+  if (!constantTimeEquals_(String(accessCode || ''), want)) {
+    return { ok: false, error: 'That access code is not right. Check with the campaign.' };
+  }
+  if (!email || email.indexOf('@') === -1) return { ok: false, error: 'Please enter a valid email.' };
+  if (!String(name || '').trim())          return { ok: false, error: 'Please enter your name.' };
+  if (!password || String(password).length < 8) {
+    return { ok: false, error: 'Password must be at least 8 characters.' };
+  }
+
+  const sh = ensureStaffSheet_();
+  if (findStaffRow_(sh, email) !== -1) {
+    return { ok: false, error: 'An account already exists for that email. Try signing in instead.' };
+  }
+
+  const salt = Utilities.getUuid().replace(/-/g, '');
+  sh.appendRow([email, String(name).trim(), 'staff',
+                hashPassword_(password, salt), salt, true, new Date(), '']);
+  SpreadsheetApp.flush();
+  return staffLogin(email, password);      // sign them straight in
+}
+
+/*** ADMIN CONSOLE (role=admin only) ***/
+
+function adminListUsers(token) {
+  requireAdmin_(token);
+  return listStaffUsers();
+}
+
+function adminCreateUser(token, email, name, role, password) {
+  requireAdmin_(token);
+  try { return { ok: true, message: createStaffUser(email, name, role, password) }; }
+  catch (err) { return { ok: false, error: String(err.message || err) }; }
+}
+
+function adminResetPassword(token, email, newPassword) {
+  requireAdmin_(token);
+  try { return { ok: true, message: resetStaffPassword(email, newPassword) }; }
+  catch (err) { return { ok: false, error: String(err.message || err) }; }
+}
+
+function adminSetActive(token, email, active) {
+  const me = requireAdmin_(token);
+  email = String(email || '').trim().toLowerCase();
+  if (email === me.email && !active) {
+    return { ok: false, error: 'You cannot deactivate your own account.' };
+  }
+  const sh = ensureStaffSheet_();
+  const row = findStaffRow_(sh, email);
+  if (row === -1) return { ok: false, error: 'No account for ' + email };
+  sh.getRange(row, ST_ACTIVE).setValue(!!active);
+  return { ok: true, message: (active ? 'Reactivated ' : 'Deactivated ') + email };
+}
+
+function adminSetRole(token, email, role) {
+  const me = requireAdmin_(token);
+  email = String(email || '').trim().toLowerCase();
+  role = (String(role).toLowerCase() === 'admin') ? 'admin' : 'staff';
+  if (email === me.email && role !== 'admin') {
+    return { ok: false, error: 'You cannot remove your own admin access.' };
+  }
+  const sh = ensureStaffSheet_();
+  const row = findStaffRow_(sh, email);
+  if (row === -1) return { ok: false, error: 'No account for ' + email };
+  sh.getRange(row, ST_ROLE).setValue(role);
+  return { ok: true, message: email + ' is now ' + role };
+}
+
+/** Read/replace the shared access code from the admin page. */
+function adminGetSignupCode(token) {
+  requireAdmin_(token);
+  return { code: PropertiesService.getScriptProperties().getProperty('SIGNUP_CODE') || '' };
+}
+
+function adminSetSignupCode(token, code) {
+  requireAdmin_(token);
+  try { return { ok: true, message: setSignupCode(code) }; }
+  catch (err) { return { ok: false, error: String(err.message || err) }; }
 }
 
 /*** INTERNALS ***/

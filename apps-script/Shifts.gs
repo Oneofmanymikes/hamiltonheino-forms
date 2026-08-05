@@ -176,6 +176,81 @@ function listOpenShifts(daysAhead) {
 }
 
 /**
+ * "Have we met?" — a returning volunteer types their phone number and skips
+ * re-entering everything.
+ *
+ * PRIVACY: this is a PUBLIC endpoint, so it deliberately returns only a first
+ * name — never the surname, email, postal code, or anything else. Otherwise
+ * anyone could dial through phone numbers and harvest the volunteer list. The
+ * rest of the record is filled in server-side at submit time (see backfill in
+ * submitShiftSignup), so the browser never sees it.
+ */
+function lookupByPhone(phone) {
+  const rec = findPersonByPhone_(phone);
+  if (!rec) return { found: false };
+  return { found: true, first: rec.first };
+}
+
+/**
+ * Most recent record for a phone number, searched across shift signups, the
+ * call list, and the form tabs. Returns null if we have not seen them.
+ * Internal only — never expose the result of this to the browser directly.
+ */
+function findPersonByPhone_(phone) {
+  const key = normPhone_(phone);
+  if (!key || key.length < 10) return null;
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+
+  // 1. Someone who has signed up for a shift before — the richest record.
+  const su = ss.getSheetByName(SHIFT_SIGNUPS_TAB);
+  if (su && su.getLastRow() >= 2) {
+    const rows = su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues();
+    for (let i = rows.length - 1; i >= 0; i--) {          // newest first
+      if (normPhone_(rows[i][SU_PHONE - 1]) === key) {
+        return { first: rows[i][SU_FIRST - 1], last: rows[i][SU_LAST - 1],
+                 email: rows[i][SU_EMAIL - 1], postal: rows[i][SU_POSTAL - 1] };
+      }
+    }
+  }
+
+  // 2. The recruitment call list.
+  const cl = ss.getSheetByName(CALL_LIST_TAB);
+  if (cl && cl.getLastRow() >= 2) {
+    const rows = cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (normPhone_(rows[i][CL_PHONE - 1]) === key) {
+        return { first: rows[i][CL_FIRST - 1], last: rows[i][CL_LAST - 1],
+                 email: rows[i][CL_EMAIL - 1], postal: rows[i][CL_POSTAL - 1] };
+      }
+    }
+  }
+
+  // 3. Anyone who filled in one of the four public forms.
+  const tabs = ['Volunteers', 'CommitToVote', 'SignRequests', 'Donations'];
+  for (let t = 0; t < tabs.length; t++) {
+    const sh = ss.getSheetByName(tabs[t]);
+    if (!sh || sh.getLastRow() < 2) continue;
+    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+                      .map(function (h) { return String(h).trim().toLowerCase(); });
+    const iPhone = headers.indexOf('phone');
+    if (iPhone === -1) continue;
+    const iFirst = headers.indexOf('first name'), iLast = headers.indexOf('last name'),
+          iEmail = headers.indexOf('email'), iPostal = headers.indexOf('postal code');
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (normPhone_(rows[i][iPhone]) === key) {
+        return { first:  iFirst  !== -1 ? rows[i][iFirst]  : '',
+                 last:   iLast   !== -1 ? rows[i][iLast]   : '',
+                 email:  iEmail  !== -1 ? rows[i][iEmail]  : '',
+                 postal: iPostal !== -1 ? rows[i][iPostal] : '' };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Record a shift signup. Called by the public form.
  * Returns {ok:true, shift:'…'} or {ok:false, error:'…'} — the form shows `error` verbatim.
  */
@@ -183,11 +258,24 @@ function submitShiftSignup(data) {
   data = data || {};
   if (data._hp) return { ok: true };                  // honeypot filled = bot; silently drop
 
-  const first = String(data.first || '').trim();
-  const last  = String(data.last  || '').trim();
-  const email = String(data.email || '').trim();
+  let first = String(data.first || '').trim();
+  let last  = String(data.last  || '').trim();
+  let email = String(data.email || '').trim();
   const phone = String(data.phone || '').trim();
   const shiftIds = (data.shiftIds || []).filter(String);
+
+  // Returning volunteer: they gave us a recognised phone number and the form
+  // therefore never asked for the rest. Fill it in from what we already hold —
+  // server-side, so these details are never sent to the browser.
+  if (phone && (!first || !last || !email)) {
+    const known = findPersonByPhone_(phone);
+    if (known) {
+      first = first || String(known.first || '').trim();
+      last  = last  || String(known.last  || '').trim();
+      email = email || String(known.email || '').trim();
+      if (!data.postal) data.postal = known.postal || '';
+    }
+  }
 
   if (!first || !last) return { ok: false, error: 'Please enter your first and last name.' };
   if (!email)          return { ok: false, error: 'Please enter your email address.' };
