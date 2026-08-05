@@ -121,6 +121,19 @@ function generateShifts(startDateStr, endDateStr) {
            to: Utilities.formatDate(end, tz, 'yyyy-MM-dd') };
 }
 
+/** Admin-triggered generation, so nobody has to open the script editor. */
+function adminGenerateShifts(token, startDateStr, endDateStr) {
+  requireAdmin_(token);
+  try {
+    const res = generateShifts(startDateStr, endDateStr);
+    return { ok: true, message: 'Added ' + res.added + ' shift' +
+                                (res.added === 1 ? '' : 's') +
+                                ' from ' + res.from + ' to ' + res.to + '.' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+}
+
 /*** PUBLIC API (called by Shift.html via google.script.run) ***/
 
 /**
@@ -163,8 +176,8 @@ function listOpenShifts(daysAhead) {
     }
     byDate[dateStr].shifts.push({
       shiftId: r[SH_ID - 1],
-      start: String(r[SH_START - 1] || ''),
-      end: String(r[SH_END - 1] || ''),
+      start: hhmm_(r[SH_START - 1]),
+      end: hhmm_(r[SH_END - 1]),
       label: prettyRange_(r[SH_START - 1], r[SH_END - 1]),
       desc: String(r[SH_DESC - 1] || ''),
       remaining: remaining,
@@ -336,7 +349,7 @@ function submitShiftSignup(data) {
                     prettyRange_(r[SH_START - 1], r[SH_END - 1]);
 
       newRows.push([
-        Utilities.getUuid().slice(0, 8), id, new Date(d), String(r[SH_START - 1] || ''),
+        Utilities.getUuid().slice(0, 8), id, new Date(d), hhmm_(r[SH_START - 1]),
         r[SH_ACTIVITY - 1] || SHIFT_ACTIVITY, first, last, email, phone,
         String(data.postal || '').trim(), 'Yes', now,
         String(data.source || WEBSITE_URL), 'Scheduled', ''
@@ -405,7 +418,7 @@ function getWeekGrid(startDateStr, token) {
       const ds = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
       if (!byDate[ds]) return;
       const slot = { shiftId: r[SH_ID - 1],
-                     start: String(r[SH_START - 1] || ''),
+                     start: hhmm_(r[SH_START - 1]),
                      label: prettyRange_(r[SH_START - 1], r[SH_END - 1]),
                      capacity: Number(r[SH_CAPACITY - 1]) || 0,
                      people: [] };
@@ -444,7 +457,58 @@ function ensureShiftsSheet_(ss) {
     sh.getRange(1, 1, 1, SH_COLS).setValues([SHIFT_HEADERS]).setFontWeight('bold');
     sh.setFrozenRows(1);
   }
+  // Start/End must stay TEXT. Left alone, Sheets parses '13:00' into a datetime on
+  // the 1899-12-30 epoch, and every downstream read gets a Date instead of 'HH:MM'.
+  sh.getRange(2, SH_START, sh.getMaxRows() - 1, 2).setNumberFormat('@');
   return sh;
+}
+
+/**
+ * Normalize a Start/End cell to 'HH:MM' whatever Sheets handed back —
+ * a Date (coerced), a string, or something else.
+ */
+function hhmm_(v) {
+  if (v instanceof Date) {
+    return ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2);
+  }
+  const m = String(v == null ? '' : v).match(/^(\d{1,2}):(\d{2})/);
+  return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : String(v == null ? '' : v);
+}
+
+/**
+ * Rewrite Start/End on every existing shift row as plain text.
+ * Start comes from the shift ID (…_1300_canvass), which is immune to the
+ * coercion; End is looked up from the block definitions by matching start,
+ * so no arithmetic assumption about shift length is baked in.
+ * Safe to re-run.
+ */
+function repairShiftTimes() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  if (sh.getLastRow() < 2) return { fixed: 0 };
+
+  const endByStart = {};
+  SHIFT_BLOCKS_WEEKEND.concat(SHIFT_BLOCKS_WEEKDAY).forEach(function (b) {
+    endByStart[b.start] = b.end;
+  });
+
+  const n = sh.getLastRow() - 1;
+  const ids = sh.getRange(2, SH_ID, n, 1).getValues();
+  const out = [];
+  let fixed = 0;
+
+  for (let i = 0; i < n; i++) {
+    const m = String(ids[i][0] || '').match(/_(\d{2})(\d{2})_/);
+    if (!m) { out.push(['', '']); continue; }
+    const start = m[1] + ':' + m[2];
+    out.push([start, endByStart[start] || '']);
+    fixed++;
+  }
+
+  const rng = sh.getRange(2, SH_START, n, 2);
+  rng.setNumberFormat('@');
+  rng.setValues(out);
+  return { fixed: fixed };
 }
 
 function ensureSignupsSheet_(ss) {
@@ -478,7 +542,8 @@ function prettyRange_(start, end) {
   return prettyTime_(start) + ' – ' + prettyTime_(end);
 }
 
-function prettyTime_(hhmm) {
+function prettyTime_(v) {
+  const hhmm = hhmm_(v);
   const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})/);
   if (!m) return String(hhmm || '');
   let h = Number(m[1]);

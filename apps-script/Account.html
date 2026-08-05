@@ -124,6 +124,20 @@
     <table id="users"></table>
 
     <div class="sec">
+      <h1 style="font-size:.95rem">Canvass shifts</h1>
+      <p class="sub">Creates shift slots for every day in the range &mdash; weekdays
+         1&ndash;3 PM and 5&ndash;7 PM, weekends also 10 AM&ndash;12 PM. Re-running only
+         adds days that do not exist yet; it never changes or removes existing shifts.</p>
+      <div class="row">
+        <div><label for="sFrom">From</label><input type="date" id="sFrom"></div>
+        <div><label for="sTo">To</label><input type="date" id="sTo"></div>
+        <div style="max-width:150px"><label>&nbsp;</label>
+          <button style="width:100%" onclick="doShifts()">Generate</button></div>
+      </div>
+      <div id="shiftMsg" class="msg"></div>
+    </div>
+
+    <div class="sec">
       <h1 style="font-size:.95rem">Call list</h1>
       <p class="sub">Pulls new people from the form tabs and the Master List into
          <b>CallList</b>, the one tab the phone bank runs on. Adds only people it
@@ -281,6 +295,17 @@
            (res && res.ok) ? 'ok' : 'bad');
       loadUsers();
     }).adminSetActive(TOKEN, email, active);
+  }
+
+  function doShifts() {
+    show('shiftMsg', 'Generating…', 'ok');
+    google.script.run.withSuccessHandler(function (res) {
+      show('shiftMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
+           (res && res.ok) ? 'ok' : 'bad');
+    }).withFailureHandler(function () { show('shiftMsg', 'Failed.', 'bad'); })
+      .adminGenerateShifts(TOKEN,
+        document.getElementById('sFrom').value,
+        document.getElementById('sTo').value);
   }
 
   function doBuild() {
