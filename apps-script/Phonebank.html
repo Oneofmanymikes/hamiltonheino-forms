@@ -70,6 +70,40 @@
     .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
     .topbar h1 { font-size: 1.05rem; margin: 0; flex: 1; }
     .topbar button { background: #fff; color: #333; border: 1px solid #ddd; font-size: .8rem; }
+
+    /* page tabs: calling vs the shift week grid, on one screen */
+    .ptabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .ptabs button { flex: 1; background: #e9e9ec; color: #444; font-size: .88rem; }
+    .ptabs button.on { background: #d71920; color: #fff; }
+
+    /* mission selector */
+    .modes { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    .modes button { background: #fff; color: #555; border: 1px solid #ccc;
+                    font-size: .78rem; font-weight: 600; padding: 7px 11px; }
+    .modes button.on { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+
+    /* week grid */
+    .wk { background: #fff; border-radius: 12px; border: 1px solid #e3e3e3; padding: 14px; }
+    .wkbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .wkbar h2 { font-size: .98rem; margin: 0; flex: 1; }
+    .wkbar button { background: #fff; color: #333; border: 1px solid #ddd; font-size: .78rem; }
+    .grid { display: grid; grid-template-columns: repeat(7, minmax(135px, 1fr));
+            gap: 7px; overflow-x: auto; }
+    .col { border: 1px solid #e6e6e6; border-radius: 9px; min-width: 135px; }
+    .col-hd { padding: 7px 9px; font-weight: 700; font-size: .78rem;
+              border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .col-hd .n { color: #888; }
+    .today .col-hd { background: #fff4f4; color: #b3151b; }
+    .wslot { padding: 7px 9px; border-bottom: 1px solid #f4f4f4; }
+    .wslot:last-child { border-bottom: 0; }
+    .wslot-t { font-size: .73rem; font-weight: 700; color: #444;
+               display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .cap { color: #999; }
+    .cap.full { color: #b3151b; }
+    .wp { font-size: .76rem; padding: 2px 0; }
+    .wp .ph { color: #666; font-size: .71rem; user-select: all; -webkit-user-select: all; }
+    .none { font-size: .73rem; color: #b0b0b0; font-style: italic; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -93,13 +127,122 @@
     <button onclick="doLogout()">Sign out</button>
   </div>
 
-  <div class="stats" id="stats"></div>
-  <div id="stage"></div>
+  <div class="ptabs">
+    <button id="tabCall" class="on" onclick="showTab('call')">📞 Calling</button>
+    <button id="tabWeek" onclick="showTab('week')">🗓️ Shift week</button>
+  </div>
+
+  <div id="callPane">
+    <div class="stats" id="stats"></div>
+    <div class="modes">
+      <button id="mEligible" class="on" onclick="setMode('eligible')">Everyone</button>
+      <button id="mRecruit" onclick="setMode('recruit')">Recruit</button>
+      <button id="mOnboard" onclick="setMode('onboard')">New volunteers</button>
+      <button id="mActive" onclick="setMode('active')">Active volunteers</button>
+      <button id="mCallback" onclick="setMode('callback')">Call-backs due</button>
+      <button id="mLapsed" onclick="setMode('lapsed')">Lapsed</button>
+    </div>
+    <div id="stage"></div>
+  </div>
+
+  <div id="weekPane" style="display:none">
+    <div class="wk">
+      <div class="wkbar">
+        <h2 id="wkRange">Week of &hellip;</h2>
+        <button onclick="wkMove(-7)">&larr; Prev</button>
+        <button onclick="wkThis()">This week</button>
+        <button onclick="wkMove(7)">Next &rarr;</button>
+      </div>
+      <div class="grid" id="wkGrid"></div>
+      <p class="note" id="wkTotals"></p>
+    </div>
+  </div>
 </div>
 
 <script>
   var TOKEN = sessionStorage.getItem('pbToken') || '';
   var CUR = null, OUTCOME = null, PICKED = {};
+  var MODE = 'eligible', WK_START = null;
+
+  /* ---------- page tabs + mission selector ---------- */
+  function showTab(which) {
+    document.getElementById('tabCall').className = which === 'call' ? 'on' : '';
+    document.getElementById('tabWeek').className = which === 'week' ? 'on' : '';
+    document.getElementById('callPane').style.display = which === 'call' ? '' : 'none';
+    document.getElementById('weekPane').style.display = which === 'week' ? '' : 'none';
+    if (which === 'week' && !WK_START) wkLoad(null);
+  }
+
+  function setMode(m) {
+    MODE = m;
+    var ids = { eligible: 'mEligible', recruit: 'mRecruit', onboard: 'mOnboard',
+                active: 'mActive', callback: 'mCallback', lapsed: 'mLapsed' };
+    for (var k in ids) document.getElementById(ids[k]).className = (k === m ? 'on' : '');
+    // hand back whoever is on screen so they are not left claimed under the old mission
+    if (CUR) google.script.run.releaseContact(TOKEN, CUR.contactId);
+    next();
+  }
+
+  /* ---------- shift week grid (same page, no second tool) ---------- */
+  function wkLoad(start) {
+    google.script.run
+      .withSuccessHandler(wkRender)
+      .withFailureHandler(function () {
+        document.getElementById('wkGrid').innerHTML =
+          '<p class="none">Could not load the shift week.</p>';
+      })
+      .getWeekGrid(start, TOKEN);
+  }
+
+  function wkMove(delta) {
+    var d = new Date(WK_START + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    wkLoad(ymd(d));
+  }
+
+  function wkThis() { wkLoad(null); }
+
+  function wkRender(data) {
+    WK_START = data.start;
+    var todayStr = ymd(new Date()), grand = 0, html = '';
+
+    document.getElementById('wkRange').textContent =
+      'Week of ' + new Date(data.start + 'T00:00:00')
+        .toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+
+    data.days.forEach(function (day) {
+      grand += day.total;
+      html += '<div class="col' + (day.date === todayStr ? ' today' : '') + '">' +
+                '<div class="col-hd"><span>' + esc(day.label) + '</span>' +
+                '<span class="n">' + day.total + '</span></div>';
+      if (!day.slots.length) html += '<div class="wslot"><span class="none">No shifts</span></div>';
+      day.slots.forEach(function (s) {
+        var full = s.capacity > 0 && s.people.length >= s.capacity;
+        html += '<div class="wslot"><div class="wslot-t"><span>' + esc(s.label) + '</span>' +
+                '<span class="cap' + (full ? ' full' : '') + '">' + s.people.length +
+                (s.capacity > 0 ? '/' + s.capacity : '') + '</span></div>';
+        if (!s.people.length) {
+          html += '<div class="none">nobody yet</div>';
+        } else {
+          s.people.forEach(function (p) {
+            html += '<div class="wp">' + esc(p.first + ' ' + p.last) +
+                    (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') + '</div>';
+          });
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+
+    document.getElementById('wkGrid').innerHTML = html;
+    document.getElementById('wkTotals').textContent =
+      grand + (grand === 1 ? ' signup' : ' signups') + ' this week.';
+  }
+
+  function ymd(d) {
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) +
+           '-' + ('0' + d.getDate()).slice(-2);
+  }
 
   if (TOKEN) { showApp(sessionStorage.getItem('pbName') || ''); refresh(); }
 
@@ -163,10 +306,20 @@
   }
 
   function renderStats(s) {
+    var g = s.seg || {};
+    document.getElementById('mRecruit').textContent = 'Recruit (' + (g['Recruit'] || 0) + ')';
+    document.getElementById('mOnboard').textContent = 'New volunteers (' + (g['New volunteer'] || 0) + ')';
+    document.getElementById('mActive').textContent  = 'Active volunteers (' + (g['Active volunteer'] || 0) + ')';
+    document.getElementById('mLapsed').textContent  = 'Lapsed (' + (s.lapsed || 0) + ')';
+
     document.getElementById('stats').innerHTML =
-      '<div class="stat"><b>' + s.remaining + '</b>left to call</div>' +
+      '<div class="stat"><b>' + s.remaining + '</b>callable now</div>' +
       '<div class="stat"><b>' + s.calledToday + '</b>called today</div>' +
       '<div class="stat"><b>' + s.booked + '</b>booked</div>' +
+      '<div class="stat" title="Resting until a different time of day, or until tomorrow morning">' +
+        '<b>' + (s.resting || 0) + '</b>resting</div>' +
+      '<div class="stat" title="Four unanswered calls, or 30 days with no contact">' +
+        '<b>' + (s.lapsed || 0) + '</b>lapsed</div>' +
       '<div class="stat"><b>' + s.total + '</b>on the list</div>';
   }
 
@@ -175,7 +328,7 @@
     document.getElementById('stage').innerHTML = '<div class="card note">Loading…</div>';
     google.script.run.withSuccessHandler(renderContact)
                      .withFailureHandler(expired)
-                     .getNextContact(TOKEN);
+                     .getNextContact(TOKEN, MODE);
   }
 
   function renderContact(c) {
@@ -197,7 +350,8 @@
 
     var h = '<div class="card">' +
       '<p class="name">' + esc(c.first + ' ' + c.last) + '</p>' +
-      '<p class="meta">' + esc(c.source ? 'From: ' + c.source : '') +
+      '<p class="meta"><b>' + esc(c.segment || '') + '</b>' +
+        (c.source ? ' · from ' + esc(c.source) : '') +
         (c.postal ? ' · ' + esc(c.postal) : '') +
         (c.attempts ? ' · ' + c.attempts + ' previous attempt' + (c.attempts > 1 ? 's' : '') : '') +
       '</p>' +
@@ -206,23 +360,25 @@
         '<button class="copy" onclick="copyNum()">Copy number</button>' +
       '</div>' +
       (c.notes ? '<p class="note" style="margin-top:10px;white-space:pre-line">' + esc(c.notes) + '</p>' : '') +
-      '<div class="script">' +
-        '<b>Hi ' + esc(c.first) + ', it\'s [your name] calling from the ' +
-        'Heino Doessing campaign.</b> You signed up to support us — thank you! ' +
-        'We\'re getting teams out knocking on doors, and I\'m calling to see if you could ' +
-        'join us for a shift. It\'s about two hours, you go out in pairs, and we train you first. ' +
-        '<b>Would any of these work for you?</b>' +
-      '</div>' +
+      '<div class="script">' + scriptFor(c) + '</div>' +
 
       '<h3>How did it go?</h3>' +
       '<div class="outcomes">' +
         '<button class="yes" onclick="pick(\'booked\',this)">✓ Yes — book a shift</button>' +
         '<button onclick="pick(\'maybe\',this)">Maybe later</button>' +
         '<button onclick="pick(\'noanswer\',this)">No answer</button>' +
+        '<button onclick="pick(\'voicemail\',this)">Left voicemail</button>' +
         '<button onclick="pick(\'callback\',this)">Call back</button>' +
         '<button onclick="pick(\'declined\',this)">Not interested</button>' +
         '<button onclick="pick(\'wrong\',this)">Wrong number</button>' +
+        '<button onclick="pick(\'dnc\',this)">Do not call</button>' +
       '</div>' +
+      (c.attempts >= 2
+        ? '<p class="note" style="margin-top:8px">Tried ' + c.attempts +
+          ' times already — after ' + (4 - c.attempts) +
+          ' more unanswered call' + ((4 - c.attempts) === 1 ? '' : 's') +
+          ' they drop to the lapsed list.</p>'
+        : '') +
 
       '<div id="pickWrap" class="shiftpick"><h3>Which shifts?</h3><div id="shifts"></div></div>' +
 
@@ -240,6 +396,29 @@
 
     document.getElementById('stage').innerHTML = h;
     renderShifts(c.shifts || []);
+  }
+
+  /* The ask is different depending on who you're calling — a cold recruit,
+     someone who just volunteered, or a volunteer who has already been out. */
+  function scriptFor(c) {
+    var hi = '<b>Hi ' + esc(c.first) + ', it\'s [your name] calling from the ' +
+             'Heino Doessing campaign.</b> ';
+    if (c.segment === 'Active volunteer') {
+      return hi + 'Thanks so much for the time you\'ve already given us' +
+        (c.bookedBefore ? ' — I can see you\'ve been out with us before' : '') + '. ' +
+        'We\'re booking the next round of canvass shifts and I wanted to see when ' +
+        'you could come out again. <b>Would any of these suit you?</b>';
+    }
+    if (c.segment === 'New volunteer') {
+      return hi + 'You signed up to volunteer with us — thank you, that\'s brilliant. ' +
+        'I\'m calling to get you out for your first canvass shift. You\'ll be paired ' +
+        'with someone experienced, we train you on the spot, and it\'s about two hours. ' +
+        '<b>What day works best for you?</b>';
+    }
+    return hi + 'We\'re knocking on doors across Hamilton East&ndash;Stoney Creek ' +
+      'ahead of the by-election, and we\'re looking for people to come out with us. ' +
+      'It\'s about two hours, you always go out in pairs, and we train you first — ' +
+      'no experience needed. <b>Is that something you\'d be up for?</b>';
   }
 
   function renderShifts(days) {
