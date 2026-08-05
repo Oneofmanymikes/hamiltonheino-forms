@@ -96,6 +96,56 @@ const MODE_RECRUIT  = 'recruit';    // segment: Recruit
 const MODE_ONBOARD  = 'onboard';    // segment: New volunteer
 const MODE_ACTIVE   = 'active';     // segment: Active volunteer
 
+const MODE_CONFIRM  = 'confirm';    // has a shift today/tomorrow, not yet confirmed
+const MODE_THANKYOU = 'thankyou';   // did a shift recently, not yet thanked
+
+/**
+ * Phone → shift context, for the confirm and thank-you missions.
+ * Returns { confirm: {phone: {...}}, thank: {phone: {...}} }.
+ *
+ * Both missions are DATE-driven, so they deliberately ignore the time-of-day
+ * rotation and the no-answer hold: a shift-confirmation call that waits until
+ * tomorrow morning is worthless if the shift is this afternoon.
+ */
+function shiftCallContext_() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const su = ss.getSheetByName(SHIFT_SIGNUPS_TAB);
+  const out = { confirm: {}, thank: {} };
+  if (!su || su.getLastRow() < 2) return out;
+
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const cutoff = new Date(todayStart); cutoff.setDate(cutoff.getDate() + 2);   // today + tomorrow
+  const thankFrom = new Date(todayStart);
+  thankFrom.setDate(thankFrom.getDate() - THANKYOU_WINDOW_DAYS);
+
+  su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues().forEach(function (r) {
+    if (!r[SU_ID - 1]) return;
+    const phone = normPhone_(r[SU_PHONE - 1]);
+    if (!phone) return;
+    const st = String(r[SU_STATUS - 1] || SS_SCHEDULED);
+    const when = shiftStart_(r[SU_DATE - 1], r[SU_TIME - 1]);
+    if (!when) return;
+
+    const label = Utilities.formatDate(when, tz, 'EEEE, MMMM d') + ' at ' +
+                  prettyTime_(r[SU_TIME - 1]);
+
+    // Confirm: an open booking that starts today or tomorrow and is unconfirmed.
+    if (SS_OPEN.indexOf(st) !== -1 && !r[SU_CONFIRMED_AT - 1] &&
+        when >= todayStart && when < cutoff) {
+      out.confirm[phone] = { signupId: r[SU_ID - 1], label: label, when: when.getTime() };
+    }
+
+    // Thank you: turned up recently and has not been thanked.
+    if ((st === SS_COMPLETED || st === SS_ARRIVED) && !r[SU_THANKED_AT - 1] &&
+        when >= thankFrom && when <= now) {
+      out.thank[phone] = { signupId: r[SU_ID - 1], label: label, when: when.getTime() };
+    }
+  });
+  return out;
+}
+
 /** Which segment does a mode restrict to? null = no segment restriction. */
 function segmentForMode_(mode) {
   if (mode === MODE_RECRUIT) return SEG_RECRUIT;
@@ -422,6 +472,11 @@ function getNextContact(token, mode) {
     const skipped = loadSkips_(user.email);
     const slot = currentSlot_(now);
     const wantSegment = segmentForMode_(mode);
+    // Date-driven missions: the shift is imminent (or just happened), so these
+    // bypass the slot rotation and the overnight hold entirely.
+    const dateDriven = (mode === MODE_CONFIRM || mode === MODE_THANKYOU);
+    const shiftCtx = dateDriven ? shiftCallContext_() : null;
+    const wanted = dateDriven ? (mode === MODE_CONFIRM ? shiftCtx.confirm : shiftCtx.thank) : null;
     let heldBack = 0, lapsedCount = 0;
 
     let bestRow = -1, bestScore = -1;
@@ -429,6 +484,9 @@ function getNextContact(token, mode) {
       const r = data[i];
       if (!r[CL_ID - 1]) continue;
       if (skipped[String(r[CL_ID - 1])]) continue;      // this caller skipped them
+
+      // --- date-driven missions: only people with an imminent/just-past shift ---
+      if (dateDriven && !wanted[normPhone_(r[CL_PHONE - 1])]) continue;
 
       // --- segment filter: which conversation is this caller having? ---
       if (wantSegment && String(r[CL_SEGMENT - 1] || SEG_RECRUIT) !== wantSegment) continue;
@@ -439,35 +497,38 @@ function getNextContact(token, mode) {
       const terminal = (String(r[CL_SEGMENT - 1] || '') === SEG_ACTIVE)
         ? [CS_DECLINED, CS_WRONG, CS_DNC]
         : [CS_BOOKED, CS_DECLINED, CS_WRONG, CS_DNC];
-      if (terminal.indexOf(status) !== -1) continue;
+      if (!dateDriven && terminal.indexOf(status) !== -1) continue;
 
       // --- call limit: hard ceiling on attempts ---
       // Exempt in the Lapsed mission. Lapsing IS the call limit for the normal
       // queue; if the ceiling also applied here, a contact who lapsed by running
       // out of attempts could never be re-engaged, which defeats the point of
       // having a re-engagement list at all.
-      if (mode !== MODE_LAPSED && Number(r[CL_ATTEMPTS - 1] || 0) >= MAX_ATTEMPTS) continue;
+      if (mode !== MODE_LAPSED && !dateDriven &&
+          Number(r[CL_ATTEMPTS - 1] || 0) >= MAX_ATTEMPTS) continue;
 
       // --- lapse gate: a Lapsed contact is reachable ONLY in the Lapsed mission ---
       const stage = String(r[CL_STAGE - 1] || ES_NEW);
       if (stage === ES_LAPSED) {
         lapsedCount++;
-        if (mode !== MODE_LAPSED) continue;
+        if (mode !== MODE_LAPSED && !dateDriven) continue;
       } else if (mode === MODE_LAPSED) {
         continue;                                       // Lapsed mission wants only Lapsed
       }
 
       // --- no-answer hold: suppressed until 6 AM the morning after ---
+      // Skipped for date-driven missions: a shift starting in three hours can't
+      // wait until tomorrow morning to be confirmed.
       const hold = r[CL_HOLD_UNTIL - 1];
-      if (hold instanceof Date && hold > now) { heldBack++; continue; }
+      if (!dateDriven && hold instanceof Date && hold > now) { heldBack++; continue; }
 
       // --- follow-up date not yet due ---
       const fu = r[CL_FOLLOWUP_AT - 1];
-      if (fu instanceof Date && fu > now) { heldBack++; continue; }
+      if (!dateDriven && fu instanceof Date && fu > now) { heldBack++; continue; }
 
       // --- time-of-day rotation: don't retry in a slot that already failed ---
       // Exempt in the Lapsed mission, which is a deliberate re-engagement sweep.
-      if (mode !== MODE_LAPSED) {
+      if (mode !== MODE_LAPSED && !dateDriven) {
         const tried = String(r[CL_TRIED_SLOTS - 1] || '');
         if (tried && tried.split(',').indexOf(slot) !== -1) { heldBack++; continue; }
       }
@@ -480,7 +541,9 @@ function getNextContact(token, mode) {
 
       // Callbacks that are due outrank everything; then new; then retries.
       let score;
-      if (status === CS_CALLBACK) {
+      if (dateDriven) {
+        score = 5000;
+      } else if (status === CS_CALLBACK) {
         const due = r[CL_CALLBACK_AT - 1];
         if (due instanceof Date && due > now) continue;   // not due yet
         score = 3000;
@@ -539,6 +602,9 @@ function getNextContact(token, mode) {
       attempts: Number(r[CL_ATTEMPTS - 1] || 0),
       notes: r[CL_NOTES - 1] || '',
       bookedBefore: String(r[CL_BOOKED - 1] || ''),
+      // For the confirm / thank-you missions the caller needs to see WHICH shift.
+      shiftContext: dateDriven ? (wanted[normPhone_(r[CL_PHONE - 1])] || null) : null,
+      mode: mode,
       shifts: listOpenShifts(14)
     };
   } finally {
@@ -777,6 +843,7 @@ function skipContact(token, contactId) {
     props.setProperty(key, JSON.stringify(list));
   }
   releaseContact(token, contactId);
+  logActivity_(user.email, 'skip', 'contact', contactId, 'skipped for ' + SKIP_TTL_DAYS + 'd');
   return { ok: true };
 }
 
@@ -794,8 +861,28 @@ function loadSkipList_(email) {
 /** Bring this caller's skipped contacts back into their queue. */
 function clearMySkips(token) {
   const user = requireStaff_(token);
+  const n = Object.keys(loadSkips_(user.email)).length;
   PropertiesService.getScriptProperties().deleteProperty(skipKey_(user.email));
-  return { ok: true, message: 'Skipped contacts are back in your queue.' };
+  logActivity_(user.email, 'skips_cleared', 'contact', '', n + ' restored');
+  return { ok: true, cleared: n,
+           message: n + ' skipped contact' + (n === 1 ? '' : 's') + ' back in your queue.' };
+}
+
+/** Admin: clear the skip list for ANY caller (or everyone). */
+function adminClearSkips(token, email) {
+  requireAdmin_(token);
+  const props = PropertiesService.getScriptProperties();
+  let cleared = 0;
+  if (email) {
+    cleared = Object.keys(loadSkips_(email)).length;
+    props.deleteProperty(skipKey_(email));
+  } else {
+    const all = props.getProperties();
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf('skip_') === 0) { props.deleteProperty(k); cleared++; }
+    });
+  }
+  return { ok: true, message: 'Cleared skips for ' + (email || 'all callers') + '.' };
 }
 
 function skipKey_(email) { return 'skip_' + String(email).toLowerCase(); }
@@ -850,6 +937,172 @@ function getPhonebankStats(token) {
     out.seg[sg]++;
   });
   return out;
+}
+
+/**
+ * Why is the queue empty? Reports, per rejection reason, how many contacts each
+ * gate discarded for a given mode. When "there are 3 callable people" and the
+ * queue says "nobody left", this is the difference.
+ */
+function debugQueue(token, mode) {
+  requireStaff_(token);
+  const user = requireStaff_(token);
+  mode = mode || MODE_ELIGIBLE;
+  const cl = ensureCallListSheet_(SpreadsheetApp.openById(SHEET_ID));
+  if (cl.getLastRow() < 2) return { empty: true };
+
+  const rows = cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS).getValues();
+  const now = new Date();
+  const skipped = loadSkips_(user.email);
+  const slot = currentSlot_(now);
+  const wantSegment = segmentForMode_(mode);
+  const staleBefore = new Date(now.getTime() - CLAIM_MINUTES * 60000);
+  const why = { candidates: 0, noId: 0, skipped: 0, segment: 0, terminal: 0,
+                maxed: 0, lapsed: 0, hold: 0, followup: 0, slot: 0, claimed: 0,
+                callbackNotDue: 0, mode: mode, wantSegment: wantSegment,
+                slotNow: slot, skipCount: Object.keys(skipped).length };
+  const samples = [];
+
+  rows.forEach(function (r) {
+    if (!r[CL_ID - 1]) { why.noId++; return; }
+    if (skipped[String(r[CL_ID - 1])]) { why.skipped++; return; }
+    const seg = String(r[CL_SEGMENT - 1] || SEG_RECRUIT);
+    if (wantSegment && seg !== wantSegment) { why.segment++; return; }
+    const status = String(r[CL_STATUS - 1] || CS_NEW);
+    const terminal = (seg === SEG_ACTIVE)
+      ? [CS_DECLINED, CS_WRONG, CS_DNC] : [CS_BOOKED, CS_DECLINED, CS_WRONG, CS_DNC];
+    if (terminal.indexOf(status) !== -1) { why.terminal++; return; }
+    if (Number(r[CL_ATTEMPTS - 1] || 0) >= MAX_ATTEMPTS) { why.maxed++; return; }
+    if (String(r[CL_STAGE - 1] || ES_NEW) === ES_LAPSED) { why.lapsed++; return; }
+    const hold = r[CL_HOLD_UNTIL - 1];
+    if (hold instanceof Date && hold > now) { why.hold++; return; }
+    const fu = r[CL_FOLLOWUP_AT - 1];
+    if (fu instanceof Date && fu > now) { why.followup++; return; }
+    const tried = String(r[CL_TRIED_SLOTS - 1] || '');
+    if (tried && tried.split(',').indexOf(slot) !== -1) { why.slot++; return; }
+    const cb = String(r[CL_CLAIMED_BY - 1] || '');
+    const ca = r[CL_CLAIMED_AT - 1];
+    if (cb && cb !== user.email && ca instanceof Date && ca > staleBefore) { why.claimed++; return; }
+    if (status === CS_CALLBACK) {
+      const due = r[CL_CALLBACK_AT - 1];
+      if (due instanceof Date && due > now) { why.callbackNotDue++; return; }
+    }
+    why.candidates++;
+    if (samples.length < 5) {
+      samples.push({ id: r[CL_ID - 1], name: r[CL_FIRST - 1] + ' ' + r[CL_LAST - 1],
+                     seg: seg, status: status });
+    }
+  });
+  why.samples = samples;
+  return why;
+}
+
+/**
+ * Confirm or thank a shift signup from the calling screen.
+ * kind: 'confirm' → marks the signup Confirmed
+ *       'thank'   → stamps the thank-you so they drop off that mission
+ *       'cancel'  → they can no longer make it; frees the place
+ */
+function resolveShiftCall(token, signupId, kind) {
+  const user = requireStaff_(token);
+  if (!signupId) return { ok: false, error: 'No shift on this contact.' };
+
+  if (kind === 'confirm') return setSignupStatus(token, signupId, SS_CONFIRMED);
+  if (kind === 'cancel')  return setSignupStatus(token, signupId, SS_CANCELLED);
+
+  if (kind === 'thank') {
+    const su = ensureSignupsSheet_(SpreadsheetApp.openById(SHEET_ID));
+    const row = findSignupRow_(su, signupId);
+    if (row === -1) return { ok: false, error: 'That signup could not be found.' };
+    su.getRange(row, SU_THANKED_AT).setValue(new Date());
+    logActivity_(user.email, 'thanked', 'signup', signupId, '');
+    return { ok: true };
+  }
+  return { ok: false, error: 'Unknown action.' };
+}
+
+/**
+ * Find someone by name, phone, or email — for when a person rings back and the
+ * caller needs their record immediately rather than waiting for the queue to
+ * offer them. Returns each contact plus their shift history.
+ */
+function searchContacts(token, query) {
+  requireStaff_(token);
+  const q = String(query || '').trim().toLowerCase();
+  if (q.length < 3) return { results: [], message: 'Type at least 3 characters.' };
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const cl = ensureCallListSheet_(ss);
+  if (cl.getLastRow() < 2) return { results: [] };
+
+  const qDigits = q.replace(/\D/g, '');
+  const rows = cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS).getValues();
+  const hits = [];
+
+  for (let i = 0; i < rows.length && hits.length < 25; i++) {
+    const r = rows[i];
+    if (!r[CL_ID - 1]) continue;
+    const name = (String(r[CL_FIRST - 1] || '') + ' ' + String(r[CL_LAST - 1] || '')).toLowerCase();
+    const email = String(r[CL_EMAIL - 1] || '').toLowerCase();
+    const phone = normPhone_(r[CL_PHONE - 1]);
+    const match = (name.indexOf(q) !== -1) ||
+                  (email && email.indexOf(q) !== -1) ||
+                  (qDigits.length >= 4 && phone && phone.indexOf(qDigits) !== -1);
+    if (!match) continue;
+    hits.push({
+      contactId: r[CL_ID - 1],
+      first: r[CL_FIRST - 1] || '', last: r[CL_LAST - 1] || '',
+      phone: r[CL_PHONE - 1] || '', email: r[CL_EMAIL - 1] || '',
+      postal: r[CL_POSTAL - 1] || '', segment: r[CL_SEGMENT - 1] || '',
+      status: r[CL_STATUS - 1] || '', stage: r[CL_STAGE - 1] || '',
+      attempts: Number(r[CL_ATTEMPTS - 1] || 0),
+      notes: r[CL_NOTES - 1] || '',
+      shifts: signupsForPhone_(ss, phone)
+    });
+  }
+  return { results: hits };
+}
+
+/** Every shift a phone number has signed up for, newest first. */
+function signupsForPhone_(ss, phone) {
+  const su = ss.getSheetByName(SHIFT_SIGNUPS_TAB);
+  if (!su || su.getLastRow() < 2 || !phone) return [];
+  const tz = Session.getScriptTimeZone();
+  const out = [];
+  su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues().forEach(function (r) {
+    if (normPhone_(r[SU_PHONE - 1]) !== phone) return;
+    const when = shiftStart_(r[SU_DATE - 1], r[SU_TIME - 1]);
+    out.push({ signupId: r[SU_ID - 1],
+               label: when ? Utilities.formatDate(when, tz, 'EEE MMM d') + ' · ' +
+                             prettyTime_(r[SU_TIME - 1]) : '',
+               status: r[SU_STATUS - 1] || SS_SCHEDULED,
+               sort: when ? when.getTime() : 0 });
+  });
+  return out.sort(function (a, b) { return b.sort - a.sort; });
+}
+
+/** Open a specific contact found via search (claims it like the queue would). */
+function openContact(token, contactId) {
+  const user = requireStaff_(token);
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const cl = ensureCallListSheet_(ss);
+  const row = findCallRow_(cl, contactId);
+  if (row === -1) return { done: true, message: 'That contact could not be found.' };
+
+  const r = cl.getRange(row, 1, 1, CL_COLS).getValues()[0];
+  cl.getRange(row, CL_CLAIMED_BY).setValue(user.email);
+  cl.getRange(row, CL_CLAIMED_AT).setValue(new Date());
+
+  return {
+    done: false, contactId: r[CL_ID - 1],
+    first: r[CL_FIRST - 1] || '', last: r[CL_LAST - 1] || '',
+    phone: r[CL_PHONE - 1] || '', email: r[CL_EMAIL - 1] || '',
+    postal: r[CL_POSTAL - 1] || '', source: r[CL_SOURCE - 1] || '',
+    status: r[CL_STATUS - 1] || CS_NEW, segment: r[CL_SEGMENT - 1] || SEG_RECRUIT,
+    stage: r[CL_STAGE - 1] || ES_NEW, attempts: Number(r[CL_ATTEMPTS - 1] || 0),
+    notes: r[CL_NOTES - 1] || '', bookedBefore: String(r[CL_BOOKED - 1] || ''),
+    shiftContext: null, mode: 'search', shifts: listOpenShifts(14)
+  };
 }
 
 /**

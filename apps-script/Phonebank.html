@@ -104,7 +104,14 @@
     .wp .ph { color: #666; font-size: .71rem; user-select: all; -webkit-user-select: all; }
     .none { font-size: .73rem; color: #b0b0b0; font-style: italic; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  </style>
+    .att { font-size: .68rem; color: #777; text-decoration: none; margin-right: 5px; }
+    .att:hover { color: #d71920; text-decoration: underline; }
+    .tag { font-size: .62rem; padding: 1px 5px; border-radius: 20px; font-weight: 700; }
+    .tag.ok { background: #e5f5ea; color: #16632f; }
+    .tag.cf { background: #e9eefb; color: #2a4b9b; }
+    .tag.no { background: #fdecec; color: #a11; }
+    .tag.can { background: #eee; color: #777; }
+    .wp.cancelled { text-decoration: line-through; opacity: .5; }  </style>
 </head>
 <body>
 
@@ -139,9 +146,17 @@
       <button id="mRecruit" onclick="setMode('recruit')">Recruit</button>
       <button id="mOnboard" onclick="setMode('onboard')">New volunteers</button>
       <button id="mActive" onclick="setMode('active')">Active volunteers</button>
+      <button id="mConfirm" onclick="setMode('confirm')">Confirm shifts</button>
+      <button id="mThankyou" onclick="setMode('thankyou')">Thank you</button>
       <button id="mCallback" onclick="setMode('callback')">Call-backs due</button>
       <button id="mLapsed" onclick="setMode('lapsed')">Lapsed</button>
     </div>
+    <div class="row" style="display:flex;gap:6px;margin-bottom:10px">
+      <input type="text" id="q" placeholder="Someone rang back? Search name, phone or email"
+             style="flex:1" onkeydown="if(event.key==='Enter')doSearch()">
+      <button class="copy" style="margin:0" onclick="doSearch()">Search</button>
+    </div>
+    <div id="searchOut"></div>
     <div id="stage"></div>
   </div>
 
@@ -160,6 +175,80 @@
 </div>
 
 <script>
+  /* ---------- attendance: tick people off in the grid ---------- */
+  function setAtt(signupId, status, ev) {
+    if (ev) { ev.stopPropagation(); }
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r && r.ok) { wkLoad(WK_START); } else { alert((r && r.error) || 'Could not save.'); }
+      })
+      .withFailureHandler(function () { alert('Could not save.'); })
+      .setSignupStatus(TOKEN, signupId, status);
+  }
+
+  function attButtons(p) {
+    if (p.cancelled) {
+      return '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Scheduled\',event);return false">restore</a>';
+    }
+    var out = '';
+    if (!p.confirmed && !p.attended) {
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Confirmed\',event);return false">confirm</a> ';
+    }
+    if (!p.attended) {
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Completed\',event);return false">came</a> ';
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'No-show\',event);return false">no-show</a> ';
+    }
+    out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+           '\',\'Cancelled\',event);return false">cancel</a>';
+    return out;
+  }
+
+  function attMark(p) {
+    if (p.cancelled) return ' <span class="tag can">cancelled</span>';
+    if (p.status === 'No-show') return ' <span class="tag no">no-show</span>';
+    if (p.attended) return ' <span class="tag ok">came</span>';
+    if (p.confirmed) return ' <span class="tag cf">confirmed</span>';
+    return '';
+  }
+  /* ---------- auto-refresh after a deploy ----------
+     Staff keep these pages open for hours. Poll the server build stamp and
+     reload when it changes — but NEVER while a contact is open, or we would
+     throw away an in-progress call. In that case we flag it and reload as soon
+     as the caller moves on. */
+  var BUILD = null, BUILD_STALE = false;
+  function checkBuild() {
+    google.script.run.withSuccessHandler(function (b) {
+      if (!b) return;
+      if (BUILD === null) { BUILD = b; return; }
+      if (b !== BUILD) {
+        BUILD_STALE = true;
+        if (typeof CUR !== 'undefined' && CUR) {
+          showUpdateBanner();          // mid-call: tell them, do not yank the page
+        } else {
+          location.reload();
+        }
+      }
+    }).withFailureHandler(function () {}).getBuildStamp();
+  }
+  function showUpdateBanner() {
+    if (document.getElementById('updBanner')) return;
+    var d = document.createElement('div');
+    d.id = 'updBanner';
+    d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#1a1a1a;' +
+      'color:#fff;padding:11px 14px;font-size:.85rem;display:flex;gap:10px;align-items:center;' +
+      'justify-content:center;font-family:inherit';
+    d.innerHTML = '<span>An update is ready. It will apply when you finish this call.</span>' +
+      '<button style="background:#d71920;color:#fff;border:0;border-radius:6px;padding:6px 12px;' +
+      'font-weight:700;cursor:pointer" onclick="location.reload()">Refresh now</button>';
+    document.body.appendChild(d);
+  }
+  function buildGateReload() { if (BUILD_STALE) { location.reload(); return true; } return false; }
+  checkBuild();
+  setInterval(checkBuild, 120000);
   var TOKEN = sessionStorage.getItem('pbToken') || '';
   var CUR = null, OUTCOME = null, PICKED = {};
   var MODE = 'eligible', WK_START = null;
@@ -176,7 +265,8 @@
   function setMode(m) {
     MODE = m;
     var ids = { eligible: 'mEligible', recruit: 'mRecruit', onboard: 'mOnboard',
-                active: 'mActive', callback: 'mCallback', lapsed: 'mLapsed' };
+                active: 'mActive', confirm: 'mConfirm', thankyou: 'mThankyou',
+                callback: 'mCallback', lapsed: 'mLapsed' };
     for (var k in ids) document.getElementById(ids[k]).className = (k === m ? 'on' : '');
     // hand back whoever is on screen so they are not left claimed under the old mission
     if (CUR) google.script.run.releaseContact(TOKEN, CUR.contactId);
@@ -217,16 +307,19 @@
                 '<span class="n">' + day.total + '</span></div>';
       if (!day.slots.length) html += '<div class="wslot"><span class="none">No shifts</span></div>';
       day.slots.forEach(function (s) {
-        var full = s.capacity > 0 && s.people.length >= s.capacity;
+        var n = (s.active === undefined) ? s.people.length : s.active;
+        var full = s.capacity > 0 && n >= s.capacity;
         html += '<div class="wslot"><div class="wslot-t"><span>' + esc(s.label) + '</span>' +
-                '<span class="cap' + (full ? ' full' : '') + '">' + s.people.length +
+                '<span class="cap' + (full ? ' full' : '') + '">' + n +
                 (s.capacity > 0 ? '/' + s.capacity : '') + '</span></div>';
         if (!s.people.length) {
           html += '<div class="none">nobody yet</div>';
         } else {
           s.people.forEach(function (p) {
-            html += '<div class="wp">' + esc(p.first + ' ' + p.last) +
-                    (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') + '</div>';
+            html += '<div class="wp' + (p.cancelled ? ' cancelled' : '') + '">' +
+                    esc(p.first + ' ' + p.last) + attMark(p) +
+                    (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') +
+                    '<br>' + attButtons(p) + '</div>';
           });
         }
         html += '</div>';
@@ -378,6 +471,18 @@
       (c.notes ? '<p class="note" style="margin-top:10px;white-space:pre-line">' + esc(c.notes) + '</p>' : '') +
       '<div class="script">' + scriptFor(c) + '</div>' +
 
+      // Confirm / thank-you missions get their own one-tap resolutions, because
+      // "did they confirm?" is a different question from "how did the call go?"
+      (c.shiftContext && c.mode === 'confirm'
+        ? '<h3>Shift ' + esc(c.shiftContext.label) + '</h3><div class="outcomes">' +
+          '<button class="yes" onclick="resolveShift(\'confirm\')">✓ Confirmed, they\'re coming</button>' +
+          '<button onclick="resolveShift(\'cancel\')">Can\'t make it — free the place</button></div>'
+        : '') +
+      (c.shiftContext && c.mode === 'thankyou'
+        ? '<h3>Thanked for ' + esc(c.shiftContext.label) + '</h3><div class="outcomes">' +
+          '<button class="yes" onclick="resolveShift(\'thank\')">✓ Thanked them</button></div>'
+        : '') +
+
       '<h3>How did it go?</h3>' +
       '<div class="outcomes">' +
         '<button class="yes" onclick="pick(\'booked\',this)">✓ Yes — book a shift</button>' +
@@ -414,11 +519,80 @@
     renderShifts(c.shifts || []);
   }
 
+  /* ---------- search: someone rang back ---------- */
+  function doSearch() {
+    var q = document.getElementById('q').value;
+    if (!q || q.length < 3) {
+      document.getElementById('searchOut').innerHTML =
+        '<p class="note">Type at least 3 characters.</p>';
+      return;
+    }
+    document.getElementById('searchOut').innerHTML = '<p class="note">Searching…</p>';
+    google.script.run.withSuccessHandler(function (res) {
+      var rs = (res && res.results) || [];
+      if (!rs.length) {
+        document.getElementById('searchOut').innerHTML =
+          '<p class="note">Nobody found for “' + esc(q) + '”.</p>';
+        return;
+      }
+      var h = '';
+      rs.forEach(function (r) {
+        h += '<div class="card" style="padding:11px;margin-bottom:6px">' +
+               '<b>' + esc(r.first + ' ' + r.last) + '</b> ' +
+               '<span class="note">' + esc(r.phone) + ' · ' + esc(r.segment) +
+               ' · ' + esc(r.status) + '</span>' +
+               (r.shifts && r.shifts.length
+                 ? '<div class="note" style="margin-top:4px">Shifts: ' +
+                   r.shifts.slice(0, 4).map(function (s) {
+                     return esc(s.label) + ' (' + esc(s.status) + ')'; }).join(' · ') + '</div>'
+                 : '<div class="note" style="margin-top:4px">No shifts booked</div>') +
+               '<button class="copy" style="margin-top:7px" onclick="openOne(\'' +
+                 esc(r.contactId) + '\')">Open this contact</button>' +
+             '</div>';
+      });
+      document.getElementById('searchOut').innerHTML = h;
+    }).withFailureHandler(function () {
+      document.getElementById('searchOut').innerHTML = '<p class="note">Search failed.</p>';
+    }).searchContacts(TOKEN, q);
+  }
+
+  function openOne(cid) {
+    document.getElementById('searchOut').innerHTML = '';
+    document.getElementById('q').value = '';
+    if (CUR) google.script.run.releaseContact(TOKEN, CUR.contactId);
+    CUR = null; OUTCOME = null; PICKED = {};
+    document.getElementById('stage').innerHTML = '<div class="card note">Loading…</div>';
+    google.script.run.withSuccessHandler(renderContact)
+                     .withFailureHandler(expired)
+                     .openContact(TOKEN, cid);
+  }
+
+  /* ---------- shift confirm / thank-you actions ---------- */
+  function resolveShift(kind) {
+    if (!CUR || !CUR.shiftContext) return;
+    google.script.run.withSuccessHandler(function (res) {
+      if (res && res.ok) { refresh(); }
+      else { msg((res && res.error) || 'Could not save.', 'bad'); }
+    }).withFailureHandler(function () { msg('Could not save.', 'bad'); })
+      .resolveShiftCall(TOKEN, CUR.shiftContext.signupId, kind);
+  }
+
   /* The ask is different depending on who you're calling — a cold recruit,
      someone who just volunteered, or a volunteer who has already been out. */
   function scriptFor(c) {
     var hi = '<b>Hi ' + esc(c.first) + ', it\'s [your name] calling from the ' +
              'Heino Doessing campaign.</b> ';
+    if (c.shiftContext && c.mode === 'confirm') {
+      return hi + 'I\'m just ringing to confirm your canvass shift <b>' +
+        esc(c.shiftContext.label) + '</b>. ' +
+        'Are you still able to make it? If anything has changed, no problem at all — ' +
+        'just let me know and we\'ll free up the place.';
+    }
+    if (c.shiftContext && c.mode === 'thankyou') {
+      return hi + '<b>Thank you for coming out with us on ' +
+        esc(c.shiftContext.label) + '</b> — it genuinely makes the difference. ' +
+        'How did you find it? And is there a day next week we could count you in again?';
+    }
     if (c.segment === 'Active volunteer') {
       return hi + 'Thanks so much for the time you\'ve already given us' +
         (c.bookedBefore ? ' — I can see you\'ve been out with us before' : '') + '. ' +

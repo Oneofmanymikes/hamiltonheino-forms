@@ -161,6 +161,41 @@
 </div>
 
 <script>
+  /* ---------- auto-refresh after a deploy ----------
+     Staff keep these pages open for hours. Poll the server build stamp and
+     reload when it changes — but NEVER while a contact is open, or we would
+     throw away an in-progress call. In that case we flag it and reload as soon
+     as the caller moves on. */
+  var BUILD = null, BUILD_STALE = false;
+  function checkBuild() {
+    google.script.run.withSuccessHandler(function (b) {
+      if (!b) return;
+      if (BUILD === null) { BUILD = b; return; }
+      if (b !== BUILD) {
+        BUILD_STALE = true;
+        if (typeof CUR !== 'undefined' && CUR) {
+          showUpdateBanner();          // mid-call: tell them, do not yank the page
+        } else {
+          location.reload();
+        }
+      }
+    }).withFailureHandler(function () {}).getBuildStamp();
+  }
+  function showUpdateBanner() {
+    if (document.getElementById('updBanner')) return;
+    var d = document.createElement('div');
+    d.id = 'updBanner';
+    d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#1a1a1a;' +
+      'color:#fff;padding:11px 14px;font-size:.85rem;display:flex;gap:10px;align-items:center;' +
+      'justify-content:center;font-family:inherit';
+    d.innerHTML = '<span>An update is ready. It will apply when you finish this call.</span>' +
+      '<button style="background:#d71920;color:#fff;border:0;border-radius:6px;padding:6px 12px;' +
+      'font-weight:700;cursor:pointer" onclick="location.reload()">Refresh now</button>';
+    document.body.appendChild(d);
+  }
+  function buildGateReload() { if (BUILD_STALE) { location.reload(); return true; } return false; }
+  checkBuild();
+  setInterval(checkBuild, 120000);
   var TOKEN = sessionStorage.getItem('acctToken') || '';
   var ME = null;
 

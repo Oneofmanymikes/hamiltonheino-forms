@@ -48,7 +48,14 @@
     .none { font-size: .76rem; color: #aaa; font-style: italic; }
     .totals { margin-top: 14px; font-size: .85rem; color: #555; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  </style>
+    .att { font-size: .68rem; color: #777; text-decoration: none; margin-right: 5px; }
+    .att:hover { color: #d71920; text-decoration: underline; }
+    .tag { font-size: .62rem; padding: 1px 5px; border-radius: 20px; font-weight: 700; }
+    .tag.ok { background: #e5f5ea; color: #16632f; }
+    .tag.cf { background: #e9eefb; color: #2a4b9b; }
+    .tag.no { background: #fdecec; color: #a11; }
+    .tag.can { background: #eee; color: #777; }
+    .wp.cancelled { text-decoration: line-through; opacity: .5; }  </style>
 </head>
 <body>
 
@@ -78,6 +85,80 @@
 </div>
 
 <script>
+  /* ---------- attendance: tick people off in the grid ---------- */
+  function setAtt(signupId, status, ev) {
+    if (ev) { ev.stopPropagation(); }
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r && r.ok) { load(START); } else { alert((r && r.error) || 'Could not save.'); }
+      })
+      .withFailureHandler(function () { alert('Could not save.'); })
+      .setSignupStatus(TOKEN, signupId, status);
+  }
+
+  function attButtons(p) {
+    if (p.cancelled) {
+      return '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Scheduled\',event);return false">restore</a>';
+    }
+    var out = '';
+    if (!p.confirmed && !p.attended) {
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Confirmed\',event);return false">confirm</a> ';
+    }
+    if (!p.attended) {
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'Completed\',event);return false">came</a> ';
+      out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+             '\',\'No-show\',event);return false">no-show</a> ';
+    }
+    out += '<a href="#" class="att" onclick="setAtt(\'' + esc(p.signupId) +
+           '\',\'Cancelled\',event);return false">cancel</a>';
+    return out;
+  }
+
+  function attMark(p) {
+    if (p.cancelled) return ' <span class="tag can">cancelled</span>';
+    if (p.status === 'No-show') return ' <span class="tag no">no-show</span>';
+    if (p.attended) return ' <span class="tag ok">came</span>';
+    if (p.confirmed) return ' <span class="tag cf">confirmed</span>';
+    return '';
+  }
+  /* ---------- auto-refresh after a deploy ----------
+     Staff keep these pages open for hours. Poll the server build stamp and
+     reload when it changes — but NEVER while a contact is open, or we would
+     throw away an in-progress call. In that case we flag it and reload as soon
+     as the caller moves on. */
+  var BUILD = null, BUILD_STALE = false;
+  function checkBuild() {
+    google.script.run.withSuccessHandler(function (b) {
+      if (!b) return;
+      if (BUILD === null) { BUILD = b; return; }
+      if (b !== BUILD) {
+        BUILD_STALE = true;
+        if (typeof CUR !== 'undefined' && CUR) {
+          showUpdateBanner();          // mid-call: tell them, do not yank the page
+        } else {
+          location.reload();
+        }
+      }
+    }).withFailureHandler(function () {}).getBuildStamp();
+  }
+  function showUpdateBanner() {
+    if (document.getElementById('updBanner')) return;
+    var d = document.createElement('div');
+    d.id = 'updBanner';
+    d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#1a1a1a;' +
+      'color:#fff;padding:11px 14px;font-size:.85rem;display:flex;gap:10px;align-items:center;' +
+      'justify-content:center;font-family:inherit';
+    d.innerHTML = '<span>An update is ready. It will apply when you finish this call.</span>' +
+      '<button style="background:#d71920;color:#fff;border:0;border-radius:6px;padding:6px 12px;' +
+      'font-weight:700;cursor:pointer" onclick="location.reload()">Refresh now</button>';
+    document.body.appendChild(d);
+  }
+  function buildGateReload() { if (BUILD_STALE) { location.reload(); return true; } return false; }
+  checkBuild();
+  setInterval(checkBuild, 120000);
   var TOKEN = sessionStorage.getItem('shiftToken') || '';
   var START = null;
 
@@ -158,18 +239,20 @@
         html += '<div class="slot"><span class="none">No shifts</span></div>';
       }
       day.slots.forEach(function (s) {
-        var full = s.capacity > 0 && s.people.length >= s.capacity;
+        var n = (s.active === undefined) ? s.people.length : s.active;
+        var full = s.capacity > 0 && n >= s.capacity;
         html += '<div class="slot">' +
                   '<div class="slot-t"><span>' + esc(s.label) + '</span>' +
-                  '<span class="cap' + (full ? ' full' : '') + '">' + s.people.length +
+                  '<span class="cap' + (full ? ' full' : '') + '">' + n +
                   (s.capacity > 0 ? '/' + s.capacity : '') + '</span></div>';
         if (!s.people.length) {
           html += '<div class="none">nobody yet</div>';
         } else {
           s.people.forEach(function (p) {
-            html += '<div class="p">' + esc(p.first + ' ' + p.last) +
+            html += '<div class="p wp' + (p.cancelled ? ' cancelled' : '') + '">' +
+                    esc(p.first + ' ' + p.last) + attMark(p) +
                     (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') +
-                    '</div>';
+                    '<br>' + attButtons(p) + '</div>';
           });
         }
         html += '</div>';

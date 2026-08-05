@@ -6,6 +6,18 @@
  * and emails the campaign on every submission.
  **********************************************************************/
 
+/**
+ * Build stamp. BUMP THIS ON EVERY DEPLOY.
+ *
+ * Staff leave the phone bank and tracker open for hours, so after a deploy they
+ * are running yesterday's HTML against today's server — which is how you get
+ * "it works for me but not for her". Every staff page polls getBuildStamp() and
+ * reloads itself when this changes (never mid-call — see the guard in the page).
+ */
+const APP_BUILD = '2026-08-05.25';
+
+function getBuildStamp() { return APP_BUILD; }
+
 /*** 1) CONFIG — edit these ***/
 const SHEET_ID       = '1KOnyhxwe01g9HOE3cLiAoXIgW1_wgEpMU0ZNUsq1NZU';   // "Hamilton Heino — Form Submissions"
 // Comma-separated: every address here gets a copy of every form/shift notification.

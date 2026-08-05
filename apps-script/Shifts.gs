@@ -40,14 +40,29 @@ const SH_COLS = 9;
 
 const SU_ID = 1, SU_SHIFT_ID = 2, SU_DATE = 3, SU_TIME = 4, SU_ACTIVITY = 5,
       SU_FIRST = 6, SU_LAST = 7, SU_EMAIL = 8, SU_PHONE = 9, SU_POSTAL = 10,
-      SU_CONSENT = 11, SU_SIGNED_AT = 12, SU_SOURCE = 13, SU_STATUS = 14, SU_NOTES = 15;
-const SU_COLS = 15;
+      SU_CONSENT = 11, SU_SIGNED_AT = 12, SU_SOURCE = 13, SU_STATUS = 14, SU_NOTES = 15,
+      // --- reminder / confirm / attendance / thank-you loop ---
+      SU_REMINDED_AT = 16, SU_CONFIRMED_AT = 17, SU_ATTENDED_AT = 18, SU_THANKED_AT = 19;
+const SU_COLS = 19;
+
+/* Signup lifecycle. A volunteer moves Scheduled → Confirmed → Arrived →
+ * Completed. No-show and Cancelled are the two ways out. Attendance is what
+ * makes the "Active volunteer" segment mean something: without it, someone who
+ * booked once and never turned up looks identical to your best canvasser. */
+const SS_SCHEDULED = 'Scheduled', SS_CONFIRMED = 'Confirmed',
+      SS_ARRIVED   = 'Arrived',   SS_COMPLETED = 'Completed',
+      SS_NOSHOW    = 'No-show',   SS_CANCELLED = 'Cancelled';
+const SS_OPEN = [SS_SCHEDULED, SS_CONFIRMED, SS_ARRIVED];
+
+const REMINDER_LEAD_HOURS = 24;    // email this far ahead of the shift
+const THANKYOU_WINDOW_DAYS = 7;    // completed within this window → thank-you call
 
 const SHIFT_HEADERS = ['Shift ID', 'Date', 'Day', 'Start', 'End', 'Activity',
                        'Description', 'Capacity', 'Signed Up'];
 const SIGNUP_HEADERS = ['Signup ID', 'Shift ID', 'Date', 'Time', 'Activity',
                         'First name', 'Last name', 'Email', 'Phone', 'Postal code',
-                        'Consent', 'Signed up at', 'Source', 'Status', 'Notes'];
+                        'Consent', 'Signed up at', 'Source', 'Status', 'Notes',
+                        'Reminded at', 'Confirmed at', 'Attended at', 'Thanked at'];
 
 /*** SCHEDULE ***/
 
@@ -366,7 +381,8 @@ function submitShiftSignup(data) {
         r[SH_ACTIVITY - 1] || SHIFT_ACTIVITY,
         sanitizeCell_(first), sanitizeCell_(last), sanitizeCell_(email), sanitizeCell_(phone),
         sanitizeCell_(String(data.postal || '').trim()), 'Yes', now,
-        sanitizeCell_(String(data.source || WEBSITE_URL)), 'Scheduled', ''
+        sanitizeCell_(String(data.source || WEBSITE_URL)), SS_SCHEDULED, '',
+        '', '', '', ''   // reminded / confirmed / attended / thanked
       ]);
       countUpdates.push({ row: idx + 2, value: signed + 1 });
       shiftRows[idx][SH_SIGNED_UP - 1] = signed + 1;   // keep local copy in step
@@ -445,9 +461,15 @@ function getWeekGrid(startDateStr, token) {
     su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues().forEach(function (r) {
       const slot = slotByKey[r[SU_SHIFT_ID - 1]];
       if (!slot) return;
-      if (String(r[SU_STATUS - 1] || '') === 'Cancelled') return;
-      slot.people.push({ first: r[SU_FIRST - 1] || '', last: r[SU_LAST - 1] || '',
-                         email: r[SU_EMAIL - 1] || '', phone: r[SU_PHONE - 1] || '' });
+      const st = String(r[SU_STATUS - 1] || SS_SCHEDULED);
+      slot.people.push({ signupId: r[SU_ID - 1],
+                         first: r[SU_FIRST - 1] || '', last: r[SU_LAST - 1] || '',
+                         email: r[SU_EMAIL - 1] || '', phone: r[SU_PHONE - 1] || '',
+                         status: st,
+                         cancelled: st === SS_CANCELLED,
+                         confirmed: !!r[SU_CONFIRMED_AT - 1],
+                         attended: st === SS_ARRIVED || st === SS_COMPLETED,
+                         noShow: st === SS_NOSHOW });
     });
   }
 
@@ -455,11 +477,217 @@ function getWeekGrid(startDateStr, token) {
     day.slots.sort(function (a, b) { return String(a.start).localeCompare(String(b.start)); });
     day.slots.forEach(function (s) {
       s.people.sort(function (a, b) { return String(a.first).localeCompare(String(b.first)); });
-      day.total += s.people.length;
+      // Cancelled people are still listed (struck through) but must not inflate
+      // the headcount a organiser plans around.
+      s.active = s.people.filter(function (p) { return !p.cancelled; }).length;
+      day.total += s.active;
     });
   });
 
   return { start: days[0].date, days: days };
+}
+
+/*** REMINDERS ***/
+
+/**
+ * Email everyone whose shift starts within the next REMINDER_LEAD_HOURS and who
+ * has not already been reminded. Idempotent — the "Reminded at" stamp means
+ * running twice never double-emails, so a trigger firing late or twice is safe.
+ *
+ * Install on an hourly trigger with installReminderTrigger().
+ */
+function sendShiftReminders() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const su = ensureSignupsSheet_(ss);
+  if (su.getLastRow() < 2) return { sent: 0 };
+
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const horizon = new Date(now.getTime() + REMINDER_LEAD_HOURS * 3600 * 1000);
+  const n = su.getLastRow() - 1;
+  const rows = su.getRange(2, 1, n, SU_COLS).getValues();
+  let sent = 0;
+
+  for (let i = 0; i < n; i++) {
+    const r = rows[i];
+    if (!r[SU_ID - 1]) continue;
+    if (SS_OPEN.indexOf(String(r[SU_STATUS - 1] || SS_SCHEDULED)) === -1) continue;
+    if (r[SU_REMINDED_AT - 1]) continue;                 // already reminded
+    const email = String(r[SU_EMAIL - 1] || '').trim();
+    if (!email) continue;
+
+    const when = shiftStart_(r[SU_DATE - 1], r[SU_TIME - 1]);
+    if (!when || when < now || when > horizon) continue;  // not in the window
+
+    const whenTxt = Utilities.formatDate(when, tz, 'EEEE, MMMM d') + ' at ' +
+                    prettyTime_(r[SU_TIME - 1]);
+    try {
+      MailApp.sendEmail({
+        to: email,
+        subject: 'Reminder: your canvass shift ' + Utilities.formatDate(when, tz, 'EEEE') +
+                 ' at ' + prettyTime_(r[SU_TIME - 1]),
+        body: 'Hi ' + String(r[SU_FIRST - 1] || '') + ',\n\n' +
+              'A quick reminder that you are booked to canvass with the ' + CANDIDATE +
+              ' campaign:\n\n' +
+              '  ' + whenTxt + '\n' +
+              (SHIFT_LOCATION ? '  ' + SHIFT_LOCATION + '\n' : '') + '\n' +
+              'Wear comfortable shoes and dress for the weather. We will pair you up ' +
+              'and show you everything on the day — no experience needed.\n\n' +
+              'If you can no longer make it, just reply to this email and we will ' +
+              'free up your place.\n\n' +
+              'Thank you,\n' + CAMPAIGN + '\n' + WEBSITE_URL + '\n',
+        replyTo: NOTIFY_EMAIL,
+        name: CAMPAIGN
+      });
+      su.getRange(i + 2, SU_REMINDED_AT).setValue(new Date());
+      sent++;
+    } catch (err) {
+      // A single bad address must not stop the rest of the run.
+      logActivity_('system', 'reminder_failed', 'signup', r[SU_ID - 1], String(err.message || err));
+    }
+  }
+
+  if (sent) logActivity_('system', 'reminders_sent', 'shift', '', sent + ' reminder(s)');
+  return { sent: sent };
+}
+
+/** Hourly trigger for the reminders. Safe to re-run; replaces any existing one. */
+function installReminderTrigger() {
+  uninstallReminderTrigger();
+  ScriptApp.newTrigger('sendShiftReminders').timeBased().everyHours(1).create();
+  return 'Shift reminders will now run hourly.';
+}
+
+function uninstallReminderTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendShiftReminders') ScriptApp.deleteTrigger(t);
+  });
+  return 'Reminder trigger removed.';
+}
+
+/** Daily trigger that lapses stale contacts. */
+function installLapseTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'markLapsedContacts') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('markLapsedContacts').timeBased().everyDays(1).atHour(4).create();
+  return 'Lapse sweep will run daily at 4 AM.';
+}
+
+/** Turn both scheduled jobs on in one go (admin button). */
+function adminInstallTriggers(token) {
+  requireAdmin_(token);
+  const a = installReminderTrigger();
+  const b = installLapseTrigger();
+  logActivity_(requireStaff_(token).email, 'triggers_installed', 'system', '', a + ' ' + b);
+  return { ok: true, message: a + ' ' + b };
+}
+
+/*** ATTENDANCE ***/
+
+/**
+ * Set a signup's status. This is how attendance gets recorded:
+ *   Confirmed  they said yes on a confirmation call
+ *   Arrived    they turned up
+ *   Completed  they did the shift
+ *   No-show    they did not turn up
+ *   Cancelled  they pulled out (frees the place)
+ *
+ * Cancelling decrements the shift's signed-up count so the place is genuinely
+ * released; un-cancelling puts it back. That symmetry is the whole reason
+ * capacity stays honest over a long campaign.
+ */
+function setSignupStatus(token, signupId, status) {
+  const user = requireStaff_(token);
+  const valid = [SS_SCHEDULED, SS_CONFIRMED, SS_ARRIVED, SS_COMPLETED, SS_NOSHOW, SS_CANCELLED];
+  if (valid.indexOf(status) === -1) return { ok: false, error: 'Unknown status.' };
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const su = ensureSignupsSheet_(ss);
+  const sh = ensureShiftsSheet_(ss);
+  const row = findSignupRow_(su, signupId);
+  if (row === -1) return { ok: false, error: 'That signup could not be found.' };
+
+  const rec = su.getRange(row, 1, 1, SU_COLS).getValues()[0];
+  const wasCancelled = String(rec[SU_STATUS - 1] || '') === SS_CANCELLED;
+  const nowCancelled = (status === SS_CANCELLED);
+  const now = new Date();
+
+  su.getRange(row, SU_STATUS).setValue(status);
+  if (status === SS_CONFIRMED && !rec[SU_CONFIRMED_AT - 1]) {
+    su.getRange(row, SU_CONFIRMED_AT).setValue(now);
+  }
+  if ((status === SS_ARRIVED || status === SS_COMPLETED) && !rec[SU_ATTENDED_AT - 1]) {
+    su.getRange(row, SU_ATTENDED_AT).setValue(now);
+  }
+
+  // Keep the shift's capacity count in step with reality.
+  if (wasCancelled !== nowCancelled) {
+    const shRow = findShiftRow_(sh, rec[SU_SHIFT_ID - 1]);
+    if (shRow !== -1) {
+      const cur = Number(sh.getRange(shRow, SH_SIGNED_UP).getValue()) || 0;
+      sh.getRange(shRow, SH_SIGNED_UP).setValue(Math.max(0, cur + (nowCancelled ? -1 : 1)));
+    }
+  }
+
+  logActivity_(user.email, 'signup_status', 'signup', signupId,
+               String(rec[SU_FIRST - 1] || '') + ' ' + String(rec[SU_LAST - 1] || '') +
+               ' → ' + status);
+  return { ok: true, status: status };
+}
+
+function findSignupRow_(su, signupId) {
+  if (!signupId || su.getLastRow() < 2) return -1;
+  const vals = su.getRange(2, SU_ID, su.getLastRow() - 1, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]) === String(signupId)) return i + 2;
+  }
+  return -1;
+}
+
+function findShiftRow_(sh, shiftId) {
+  if (!shiftId || sh.getLastRow() < 2) return -1;
+  const vals = sh.getRange(2, SH_ID, sh.getLastRow() - 1, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]) === String(shiftId)) return i + 2;
+  }
+  return -1;
+}
+
+/** Local Date for a shift's start, from its stored date + 'HH:MM'. */
+function shiftStart_(dateVal, timeVal) {
+  const d = (dateVal instanceof Date) ? new Date(dateVal) : parseYmdLocal_(String(dateVal));
+  if (!d || isNaN(d.getTime())) return null;
+  const m = String(hhmm_(timeVal)).match(/^(\d{1,2}):(\d{2})/);
+  d.setHours(m ? Number(m[1]) : 0, m ? Number(m[2]) : 0, 0, 0);
+  return d;
+}
+
+/** Top volunteers by completed shifts — for recognition and re-recruiting. */
+function getAttendanceLeaderboard(token, limit) {
+  requireStaff_(token);
+  const su = ensureSignupsSheet_(SpreadsheetApp.openById(SHEET_ID));
+  if (su.getLastRow() < 2) return [];
+
+  const tally = {};
+  su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues().forEach(function (r) {
+    if (!r[SU_ID - 1]) return;
+    const st = String(r[SU_STATUS - 1] || '');
+    const key = normPhone_(r[SU_PHONE - 1]) || String(r[SU_EMAIL - 1] || '').toLowerCase();
+    if (!key) return;
+    if (!tally[key]) {
+      tally[key] = { name: String(r[SU_FIRST - 1] || '') + ' ' + String(r[SU_LAST - 1] || ''),
+                     completed: 0, noShows: 0, booked: 0 };
+    }
+    tally[key].booked++;
+    if (st === SS_COMPLETED || st === SS_ARRIVED) tally[key].completed++;
+    if (st === SS_NOSHOW) tally[key].noShows++;
+  });
+
+  return Object.keys(tally).map(function (k) { return tally[k]; })
+    .filter(function (v) { return v.completed > 0 || v.noShows > 0; })
+    .sort(function (a, b) { return b.completed - a.completed || a.noShows - b.noShows; })
+    .slice(0, Number(limit) || 15);
 }
 
 /*** HELPERS ***/
@@ -531,6 +759,11 @@ function ensureSignupsSheet_(ss) {
     su = ss.insertSheet(SHIFT_SIGNUPS_TAB);
     su.getRange(1, 1, 1, SU_COLS).setValues([SIGNUP_HEADERS]).setFontWeight('bold');
     su.setFrozenRows(1);
+    return su;
+  }
+  // Migration: the reminder/confirm/attendance columns were added later.
+  if (su.getLastColumn() < SU_COLS) {
+    su.getRange(1, 1, 1, SU_COLS).setValues([SIGNUP_HEADERS]).setFontWeight('bold');
   }
   return su;
 }
