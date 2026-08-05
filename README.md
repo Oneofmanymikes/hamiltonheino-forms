@@ -4,7 +4,7 @@ Four embeddable web forms (**Commit to Vote · Request a Sign · Commit to Donat
 **Heino Doessing, Ontario Liberal candidate for Hamilton East–Stoney Creek**.
 
 Every submission → a row in a Google Sheet (one tab per form, each with an `In Liberalist?` checkbox) →
-a notification email to **hello@hamiltonheino.ca**. Forms are served by a single Google Apps Script web app,
+a notification email to **info@voteheino.ca**. Forms are served by a single Google Apps Script web app,
 embedded as iframes on the GitHub Pages "Get Involved" page and on any partner site. Supporters are pushed
 to **ontarioliberal.ca** for more information.
 
@@ -30,7 +30,7 @@ to **ontarioliberal.ca** for more information.
 Legend: **🧑 YOU** = a physical login / browser / account action only you can do · **🤖 CLAUDE** = I can run it once you've done the prerequisite.
 
 ### 1. 🧑 Create the Google Sheet
-Signed in as **hello@hamiltonheino.ca**, create a blank Sheet named **"Hamilton Heino — Form Submissions"**.
+Signed in as **info@voteheino.ca**, create a blank Sheet named **"Hamilton Heino — Form Submissions"**.
 Copy its ID from the URL (`/spreadsheets/d/`**`THIS_PART`**`/edit`) and send it to me. Tabs auto-create on first submit.
 
 ### 2. 🤖 CLAUDE — set the Sheet ID
@@ -55,7 +55,7 @@ sandbox classifier when deploying a public web app):
 before `clasp login`** so you don't clobber another project's credentials.
 
 ### 3. 🧑 clasp login
-In a terminal (as the Windows user **Micha**, signed into Google as **hello@hamiltonheino.ca** in the browser that opens):
+In a terminal (as the Windows user **Micha**, signed into Google as **info@voteheino.ca** in the browser that opens):
 ```
 clasp login
 ```
@@ -70,11 +70,11 @@ clasp push -f
 (Creates `.clasp.json` locally — gitignored. `-f` pushes the manifest.)
 
 ### 5. 🧑 Authorize scopes (one-time browser consent)
-The web app runs **as hello@hamiltonheino.ca** and needs Sheets + Send-Email permission. Open the editor:
+The web app runs **as info@voteheino.ca** and needs Sheets + Send-Email permission. Open the editor:
 ```
 clasp open-script
 ```
-Run any function once (e.g. `doGet`) → **Review permissions** → choose the hello@hamiltonheino.ca account →
+Run any function once (e.g. `doGet`) → **Review permissions** → choose the info@voteheino.ca account →
 *Advanced ▸ Go to project (unsafe)* (safe — you own it) → **Allow**.
 
 ### 6. 🤖 CLAUDE — deploy the web app
@@ -97,7 +97,7 @@ DNS at the registrar:
 - Apex `@` → **A** → `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`
 - Apex `@` → **AAAA** → `2606:50c0:8000::153`, `2606:50c0:8001::153`, `2606:50c0:8002::153`, `2606:50c0:8003::153`
 - `www` → **CNAME** → the apex (or `<account>.github.io`)
-- **Keep the existing MX/SPF/DKIM records** so `hello@hamiltonheino.ca` keeps receiving.
+- **Keep the existing MX/SPF/DKIM records** so `info@voteheino.ca` keeps receiving.
 
 Then tick **Enforce HTTPS** once the cert provisions.
 
@@ -123,10 +123,10 @@ every embedded iframe pointing at the old code. Always `redeploy` the same deplo
 
 ## Testing checklist
 
-- [ ] `SHEET_ID` set in `Code.gs`; web app deployed (execute as hello@hamiltonheino.ca / access Anyone).
+- [ ] `SHEET_ID` set in `Code.gs`; web app deployed (execute as info@voteheino.ca / access Anyone).
 - [ ] Open each `…/exec?form=vote|sign|donate|volunteer` directly — form renders and is styled.
 - [ ] Submit one test per form → new row on the correct tab with a working `In Liberalist?` checkbox.
-- [ ] Notification email arrives at hello@hamiltonheino.ca with all fields + row number; Reply-To = submitter.
+- [ ] Notification email arrives at info@voteheino.ca with all fields + row number; Reply-To = submitter.
 - [ ] Honeypot: a submission with the hidden `_hp` field filled creates **no** row.
 - [ ] GitHub Pages page shows all four iframes and each submits successfully.
 - [ ] "Learn more" links point to ontarioliberal.ca.

@@ -3,12 +3,13 @@
  * Campaign Forms backend (single Apps Script web app)
  *
  * Serves 4 embeddable forms, writes each submission to a Google Sheet,
- * and emails hello@hamiltonheino.ca on every submission.
+ * and emails the campaign on every submission.
  **********************************************************************/
 
 /*** 1) CONFIG — edit these ***/
 const SHEET_ID       = '1KOnyhxwe01g9HOE3cLiAoXIgW1_wgEpMU0ZNUsq1NZU';   // "Hamilton Heino — Form Submissions"
-const NOTIFY_EMAIL   = 'hello@hamiltonheino.ca';
+// Comma-separated: every address here gets a copy of every form/shift notification.
+const NOTIFY_EMAIL   = 'info@voteheino.ca,gglasier68@gmail.com';
 const CANDIDATE      = 'Heino Doessing';
 const CAMPAIGN       = 'Heino Doessing · Ontario Liberal for Hamilton East–Stoney Creek';  // shown in form + email
 const WEBSITE_URL    = 'https://voteheino.ca';
