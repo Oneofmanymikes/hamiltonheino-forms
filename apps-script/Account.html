@@ -124,6 +124,16 @@
     <table id="users"></table>
 
     <div class="sec">
+      <h1 style="font-size:.95rem">Call list</h1>
+      <p class="sub">Pulls new people from the form tabs and the Master List into
+         <b>CallList</b>, the one tab the phone bank runs on. Adds only people it
+         has not seen &mdash; existing call history is never touched. Run it after
+         a batch of new signups or a fresh voter-file import.</p>
+      <button onclick="doBuild()">Rebuild call list</button>
+      <div id="buildMsg" class="msg"></div>
+    </div>
+
+    <div class="sec">
       <h1 style="font-size:.95rem">Self sign-up</h1>
       <p class="sub">Set a shared access code and volunteers can create their own accounts &mdash;
          no admin needed. Leave it blank to close sign-up.</p>
@@ -271,6 +281,15 @@
            (res && res.ok) ? 'ok' : 'bad');
       loadUsers();
     }).adminSetActive(TOKEN, email, active);
+  }
+
+  function doBuild() {
+    show('buildMsg', 'Building…', 'ok');
+    google.script.run.withSuccessHandler(function (res) {
+      show('buildMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
+           (res && res.ok) ? 'ok' : 'bad');
+    }).withFailureHandler(function () { show('buildMsg', 'Failed.', 'bad'); })
+      .adminBuildCallList(TOKEN);
   }
 
   function loadCode() {

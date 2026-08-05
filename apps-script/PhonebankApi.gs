@@ -16,14 +16,25 @@
 
 const CALL_LIST_TAB = 'CallList';
 
-const CL_ID = 1, CL_FIRST = 2, CL_LAST = 3, CL_PHONE = 4, CL_EMAIL = 5,
-      CL_POSTAL = 6, CL_SOURCE = 7, CL_STATUS = 8, CL_ATTEMPTS = 9,
-      CL_LAST_CALLED = 10, CL_LAST_BY = 11, CL_CALLBACK_AT = 12, CL_NOTES = 13,
-      CL_CLAIMED_BY = 14, CL_CLAIMED_AT = 15, CL_BOOKED = 16;
-const CL_COLS = 16;
-const CALL_LIST_HEADERS = ['Contact ID', 'First name', 'Last name', 'Phone', 'Email',
-  'Postal code', 'Source', 'Status', 'Attempts', 'Last called', 'Last called by',
-  'Callback at', 'Notes', 'Claimed by', 'Claimed at', 'Booked shift'];
+const CL_ID = 1, CL_VANID = 2, CL_FIRST = 3, CL_LAST = 4, CL_PHONE = 5,
+      CL_EMAIL = 6, CL_POSTAL = 7, CL_ADDRESS = 8, CL_AGE = 9,
+      CL_SOURCE = 10, CL_CONSENT = 11, CL_PRIORITY = 12,
+      CL_STATUS = 13, CL_ATTEMPTS = 14, CL_LAST_CALLED = 15, CL_LAST_BY = 16,
+      CL_CALLBACK_AT = 17, CL_NOTES = 18, CL_CLAIMED_BY = 19, CL_CLAIMED_AT = 20,
+      CL_BOOKED = 21;
+const CL_COLS = 21;
+const CALL_LIST_HEADERS = ['Contact ID', 'VAN ID', 'First name', 'Last name', 'Phone',
+  'Email', 'Postal code', 'Address', 'Age', 'Source', 'Email consent', 'Priority',
+  'Status', 'Attempts', 'Last called', 'Last called by', 'Callback at', 'Notes',
+  'Claimed by', 'Claimed at', 'Booked shift'];
+
+// Email consent. Voter-file records never asked to hear from us, so they are
+// callable but must not be swept into email sends.
+const CONSENT_YES = 'Yes (form)', CONSENT_NONE = 'No (voter file)';
+
+// Priority decides who gets called first. Someone who filled in a form this week
+// is a far warmer ask than a name off the voter file.
+const PRI_FORM = 1, PRI_VOTERFILE = 2;
 
 // Statuses. 'New' and 'Callback' and 'No answer' are callable; the rest are done.
 const CS_NEW = 'New', CS_CALLBACK = 'Callback', CS_NO_ANSWER = 'No answer',
@@ -35,7 +46,10 @@ const CLAIM_MINUTES = 8;             // a contact held this long by an idle call
 
 // Which form tabs to harvest contacts from. Every one of these forms has a
 // required consent checkbox, so everybody here has agreed to be contacted.
-const CALL_SOURCE_TABS = ['CommitToVote', 'Volunteers', 'SignRequests', 'Donations'];
+const CALL_SOURCE_TABS = ['Volunteers', 'CommitToVote', 'SignRequests', 'Donations'];
+
+// The static voter-file export. Different headers entirely — see buildCallList.
+const MASTER_LIST_TAB = 'Master List';
 
 /*** LIST BUILDING ***/
 
@@ -71,6 +85,8 @@ function buildCallList() {
   }
 
   const rows = [];
+
+  // ---- 1. Form tabs. Everyone here ticked a consent box. Warm, so called first.
   CALL_SOURCE_TABS.forEach(function (tabName) {
     const sh = ss.getSheetByName(tabName);
     if (!sh || sh.getLastRow() < 2) return;
@@ -92,22 +108,105 @@ function buildCallList() {
       if (seen[phone]) return;
       seen[phone] = true;
 
-      rows.push([
-        Utilities.getUuid().slice(0, 8),
-        iFirst  !== -1 ? r[iFirst]  : '',
-        iLast   !== -1 ? r[iLast]   : '',
-        formatPhone_(phone),
-        iEmail  !== -1 ? r[iEmail]  : '',
-        iPostal !== -1 ? r[iPostal] : '',
-        tabName, CS_NEW, 0, '', '', '', '', '', '', ''
-      ]);
+      rows.push(newCallRow_({
+        first:  iFirst  !== -1 ? r[iFirst]  : '',
+        last:   iLast   !== -1 ? r[iLast]   : '',
+        phone:  phone,
+        email:  iEmail  !== -1 ? r[iEmail]  : '',
+        postal: iPostal !== -1 ? r[iPostal] : '',
+        source: tabName, consent: CONSENT_YES, priority: PRI_FORM
+      }));
     });
   });
 
+  // ---- 2. Master List (voter-file export). Different shape entirely:
+  //         one 'Name' column, three phone columns, 'Preferred Email', no consent.
+  const ml = ss.getSheetByName(MASTER_LIST_TAB);
+  if (ml && ml.getLastRow() >= 2) {
+    const H = ml.getRange(1, 1, 1, ml.getLastColumn()).getValues()[0]
+                .map(function (h) { return String(h).trim().toLowerCase(); });
+    const iVan     = H.indexOf('van id');
+    const iName    = H.indexOf('name');
+    const iAddress = H.indexOf('address');
+    const iPostal  = H.indexOf('postal code');
+    const iAge     = H.indexOf('age');
+    const iEmail   = H.indexOf('preferred email');
+    // Cell first — most likely to be answered and least likely to be a shared landline.
+    const phoneCols = ['cell phone', 'phone', 'landline phone']
+                        .map(function (h) { return H.indexOf(h); })
+                        .filter(function (i) { return i !== -1; });
+
+    ml.getRange(2, 1, ml.getLastRow() - 1, ml.getLastColumn()).getValues().forEach(function (r) {
+      let phone = '';
+      for (let i = 0; i < phoneCols.length; i++) {
+        const p = normPhone_(r[phoneCols[i]]);
+        if (p && p.length === 10) { phone = p; break; }
+      }
+      if (!phone) return;                            // no reachable number
+      if (seen[phone]) return;                       // already have them from a form
+      seen[phone] = true;
+
+      const nm = splitName_(iName !== -1 ? r[iName] : '');
+      rows.push(newCallRow_({
+        vanId:   iVan     !== -1 ? r[iVan]     : '',
+        first:   nm.first, last: nm.last,
+        phone:   phone,
+        email:   iEmail   !== -1 ? r[iEmail]   : '',
+        postal:  iPostal  !== -1 ? r[iPostal]  : '',
+        address: iAddress !== -1 ? r[iAddress] : '',
+        age:     iAge     !== -1 ? r[iAge]     : '',
+        source:  MASTER_LIST_TAB, consent: CONSENT_NONE, priority: PRI_VOTERFILE
+      }));
+    });
+  }
+
   if (rows.length) {
     cl.getRange(cl.getLastRow() + 1, 1, rows.length, CL_COLS).setValues(rows);
+    cl.getRange(2, 1, cl.getLastRow() - 1, CL_COLS)
+      .sort([{ column: CL_PRIORITY, ascending: true }]);
   }
   return { added: rows.length, total: Math.max(0, cl.getLastRow() - 1) };
+}
+
+/** One CallList row from a normalized person object. */
+function newCallRow_(p) {
+  return [
+    Utilities.getUuid().slice(0, 8),
+    p.vanId || '', String(p.first || '').trim(), String(p.last || '').trim(),
+    formatPhone_(p.phone), p.email || '', p.postal || '', p.address || '', p.age || '',
+    p.source || '', p.consent || CONSENT_NONE, p.priority || PRI_VOTERFILE,
+    CS_NEW, 0, '', '', '', '', '', '', ''
+  ];
+}
+
+/**
+ * Voter files write names either "Last, First" or "First Last" — handle both.
+ * Everything after the first token is treated as the surname, so compound
+ * surnames survive ("Maria Van Der Berg" → Maria / Van Der Berg).
+ */
+function splitName_(full) {
+  const s = String(full || '').trim().replace(/\s+/g, ' ');
+  if (!s) return { first: '', last: '' };
+  if (s.indexOf(',') !== -1) {
+    const parts = s.split(',');
+    return { first: (parts[1] || '').trim(), last: (parts[0] || '').trim() };
+  }
+  const bits = s.split(' ');
+  if (bits.length === 1) return { first: bits[0], last: '' };
+  return { first: bits[0], last: bits.slice(1).join(' ') };
+}
+
+/** Admin-triggered refresh, so nobody has to open the script editor. */
+function adminBuildCallList(token) {
+  requireAdmin_(token);
+  try {
+    const res = buildCallList();
+    return { ok: true, message: 'Added ' + res.added + ' new contact' +
+                                (res.added === 1 ? '' : 's') +
+                                '. The call list now holds ' + res.total + '.' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
 }
 
 /*** CALLER API (Phonebank.html) ***/
@@ -157,14 +256,16 @@ function getNextContact(token) {
       if (status === CS_CALLBACK) {
         const due = r[CL_CALLBACK_AT - 1];
         if (due instanceof Date && due > now) continue;   // not due yet
-        score = 300;
+        score = 3000;
       } else if (status === CS_NEW) {
-        score = 200;
+        score = 2000;
       } else if (status === CS_MAYBE) {
-        score = 50;
+        score = 500;
       } else {
-        score = 100 - Number(r[CL_ATTEMPTS - 1] || 0);    // fewer attempts first
+        score = 1000 - Number(r[CL_ATTEMPTS - 1] || 0);   // fewer attempts first
       }
+      // Within the same status, warm form signups outrank cold voter-file names.
+      if (Number(r[CL_PRIORITY - 1] || PRI_VOTERFILE) === PRI_FORM) score += 100;
 
       if (score > bestScore) { bestScore = score; bestRow = i + 2; }
     }
@@ -186,7 +287,11 @@ function getNextContact(token) {
       phone: r[CL_PHONE - 1] || '',
       email: r[CL_EMAIL - 1] || '',
       postal: r[CL_POSTAL - 1] || '',
+      address: r[CL_ADDRESS - 1] || '',
+      age: r[CL_AGE - 1] || '',
       source: r[CL_SOURCE - 1] || '',
+      warm: Number(r[CL_PRIORITY - 1] || PRI_VOTERFILE) === PRI_FORM,
+      emailConsent: r[CL_CONSENT - 1] || '',
       status: r[CL_STATUS - 1] || CS_NEW,
       attempts: Number(r[CL_ATTEMPTS - 1] || 0),
       notes: r[CL_NOTES - 1] || '',
