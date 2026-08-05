@@ -131,6 +131,7 @@ const CS_NEW = 'New', CS_CALLBACK = 'Callback', CS_NO_ANSWER = 'No answer',
 
 const MAX_ATTEMPTS = 4;              // stop calling after this many no-answers
 const CLAIM_MINUTES = 8;             // a contact held this long by an idle caller is released
+const SKIP_TTL_DAYS = 7;             // a caller's skip lasts a week, then the contact returns
 
 // Which form tabs to harvest contacts from. Every one of these forms has a
 // required consent checkbox, so everybody here has agreed to be contacted.
@@ -728,6 +729,28 @@ function releaseContact(token, contactId) {
 }
 
 /**
+ * Heartbeat: refresh my claim on the contact currently open on my screen.
+ *
+ * Without this, a claim expires after CLAIM_MINUTES of wall-clock time, so any
+ * call that runs longer than that releases the contact mid-conversation and a
+ * second caller can be handed the same person. The page pings this every
+ * minute, so a call of any length stays held; if the tab closes the pings stop
+ * and the claim frees itself within the normal window.
+ */
+function renewClaim(token, contactId) {
+  const user = requireStaff_(token);
+  if (!contactId) return { ok: false };
+  const cl = ensureCallListSheet_(SpreadsheetApp.openById(SHEET_ID));
+  const row = findCallRow_(cl, contactId);
+  if (row === -1) return { ok: false };
+  const holder = String(cl.getRange(row, CL_CLAIMED_BY).getValue() || '');
+  if (holder && holder !== user.email) return { ok: false, takenOver: true };
+  cl.getRange(row, CL_CLAIMED_BY).setValue(user.email);
+  cl.getRange(row, CL_CLAIMED_AT).setValue(new Date());
+  return { ok: true };
+}
+
+/**
  * Skip a contact for good (for this caller).
  *
  * Releasing alone is not enough: the contact keeps its status and priority, so
@@ -742,15 +765,30 @@ function skipContact(token, contactId) {
   if (contactId) {
     const key = skipKey_(user.email);
     const props = PropertiesService.getScriptProperties();
-    let ids = [];
-    try { ids = JSON.parse(props.getProperty(key) || '[]'); } catch (err) { ids = []; }
-    if (ids.indexOf(String(contactId)) === -1) ids.push(String(contactId));
-    // Keep it bounded — Script Properties values cap at ~9KB.
-    if (ids.length > 400) ids = ids.slice(ids.length - 400);
-    props.setProperty(key, JSON.stringify(ids));
+    const now = Date.now();
+    let list = loadSkipList_(user.email);
+    // Drop anything past its TTL while we are here, so skips decay instead of
+    // permanently shrinking this caller's queue.
+    list = list.filter(function (e) { return (now - e.t) < SKIP_TTL_DAYS * 86400000; });
+    if (!list.some(function (e) { return e.id === String(contactId); })) {
+      list.push({ id: String(contactId), t: now });
+    }
+    if (list.length > 400) list = list.slice(list.length - 400);
+    props.setProperty(key, JSON.stringify(list));
   }
   releaseContact(token, contactId);
   return { ok: true };
+}
+
+/** Raw skip entries [{id, t}], tolerating the old plain-array format. */
+function loadSkipList_(email) {
+  try {
+    const arr = JSON.parse(
+      PropertiesService.getScriptProperties().getProperty(skipKey_(email)) || '[]');
+    return arr.map(function (e) {
+      return (typeof e === 'string') ? { id: e, t: Date.now() } : e;
+    }).filter(function (e) { return e && e.id; });
+  } catch (err) { return []; }
 }
 
 /** Bring this caller's skipped contacts back into their queue. */
@@ -763,13 +801,12 @@ function clearMySkips(token) {
 function skipKey_(email) { return 'skip_' + String(email).toLowerCase(); }
 
 function loadSkips_(email) {
-  try {
-    const raw = PropertiesService.getScriptProperties().getProperty(skipKey_(email));
-    const arr = JSON.parse(raw || '[]');
-    const set = {};
-    arr.forEach(function (id) { set[String(id)] = true; });
-    return set;
-  } catch (err) { return {}; }
+  const now = Date.now();
+  const set = {};
+  loadSkipList_(email).forEach(function (e) {
+    if ((now - e.t) < SKIP_TTL_DAYS * 86400000) set[String(e.id)] = true;
+  });
+  return set;
 }
 
 /** Counts for the header strip. */

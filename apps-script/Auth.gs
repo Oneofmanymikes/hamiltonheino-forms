@@ -65,6 +65,7 @@ function resetStaffPassword(email, newPassword) {
   const salt = Utilities.getUuid().replace(/-/g, '');
   sh.getRange(row, ST_SALT).setValue(salt);
   sh.getRange(row, ST_HASH).setValue(hashPassword_(newPassword, salt));
+  revokeSessionsFor_(email);   // a password change must end existing sessions
   return 'Password reset for ' + email;
 }
 
@@ -166,8 +167,11 @@ function staffLogout(token) {
 /** Change your own password. Requires a valid session and the current password. */
 function changeMyPassword(token, currentPassword, newPassword) {
   const user = requireStaff_(token);
-  const check = staffLogin(user.email, currentPassword);
-  if (!check.ok) return { ok: false, error: 'Your current password is not correct.' };
+  // verifyPassword_ rather than staffLogin: logging in again would mint a second
+  // session token that nobody ever holds, and would count toward lockout.
+  if (!verifyPassword_(user.email, currentPassword)) {
+    return { ok: false, error: 'Your current password is not correct.' };
+  }
   if (!newPassword || String(newPassword).length < 8) {
     return { ok: false, error: 'New password must be at least 8 characters.' };
   }
@@ -201,6 +205,34 @@ function requireAdmin_(token) {
   const user = requireStaff_(token);
   if (String(user.role) !== 'admin') throw new Error('That action needs an admin account.');
   return user;
+}
+
+/**
+ * Kill every live session belonging to an account.
+ *
+ * Without this, deactivating someone or resetting their password did nothing to
+ * anyone already signed in — their token stayed valid for up to 12 hours, so
+ * "remove this person's access" did not actually remove it. Called from
+ * deactivate and from every password change.
+ */
+function revokeSessionsFor_(email) {
+  email = String(email || '').toLowerCase();
+  const props = PropertiesService.getScriptProperties();
+  const all = props.getProperties();
+  const cache = CacheService.getScriptCache();
+  let killed = 0;
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf('sess_') !== 0) return;
+    try {
+      const s = JSON.parse(all[k]);
+      if (s && String(s.email).toLowerCase() === email) {
+        props.deleteProperty(k);
+        cache.remove(k);
+        killed++;
+      }
+    } catch (err) { /* malformed — leave for the purge sweep */ }
+  });
+  return killed;
 }
 
 /** Housekeeping: drop expired session properties. Safe to run on a daily trigger. */
@@ -298,7 +330,9 @@ function adminSetActive(token, email, active) {
   const row = findStaffRow_(sh, email);
   if (row === -1) return { ok: false, error: 'No account for ' + email };
   sh.getRange(row, ST_ACTIVE).setValue(!!active);
-  return { ok: true, message: (active ? 'Reactivated ' : 'Deactivated ') + email };
+  const killed = active ? 0 : revokeSessionsFor_(email);
+  return { ok: true, message: (active ? 'Reactivated ' : 'Deactivated ') + email +
+           (killed ? ' (signed out of ' + killed + ' session' + (killed === 1 ? '' : 's') + ')' : '') };
 }
 
 function adminSetRole(token, email, role) {
@@ -347,6 +381,21 @@ function findStaffRow_(sh, email) {
     if (String(vals[i][0]).trim().toLowerCase() === email) return i + 2;
   }
   return -1;
+}
+
+/**
+ * Check a password without any of staffLogin's side effects — no session token,
+ * no lockout counter, no last-login stamp. For re-confirming identity mid-session.
+ */
+function verifyPassword_(email, password) {
+  if (!email || !password) return false;
+  const sh = ensureStaffSheet_();
+  const row = findStaffRow_(sh, String(email).trim().toLowerCase());
+  if (row === -1) return false;
+  const rec = sh.getRange(row, 1, 1, STAFF_COLS).getValues()[0];
+  const expected = String(rec[ST_HASH - 1] || '');
+  if (!expected) return false;
+  return constantTimeEquals_(expected, hashPassword_(password, String(rec[ST_SALT - 1] || '')));
 }
 
 function hashPassword_(password, salt) {

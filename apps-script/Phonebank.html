@@ -250,6 +250,22 @@
     if (CUR && TOKEN) google.script.run.releaseContact(TOKEN, CUR.contactId);
   });
 
+  // Keep my claim alive while a contact is open. Without this a call running
+  // longer than the claim window releases the contact mid-conversation and a
+  // second caller can be handed the same person.
+  setInterval(function () {
+    if (CUR && TOKEN) {
+      google.script.run
+        .withSuccessHandler(function (r) {
+          if (r && r.takenOver) {
+            msg('Another caller has taken this contact — finish up and hit Skip.', 'bad');
+          }
+        })
+        .withFailureHandler(function () {})
+        .renewClaim(TOKEN, CUR.contactId);
+    }
+  }, 60000);
+
   /* ---------- auth ---------- */
   function doLogin() {
     var b = document.getElementById('loginBtn');

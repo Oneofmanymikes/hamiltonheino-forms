@@ -141,6 +141,17 @@ function adminGenerateShifts(token, startDateStr, endDateStr) {
  * Only returns shifts that are today or later and not already full.
  */
 function listOpenShifts(daysAhead) {
+  // Cached briefly: the phone bank asks for this on EVERY contact, and it reads
+  // the whole Shifts tab each time. 60s is short enough that a shift filling up
+  // is reflected almost immediately, and capacity is enforced again at submit
+  // time under a lock, so a stale read can never oversubscribe a shift.
+  const cacheKey = 'openShifts_' + (daysAhead || 21);
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get(cacheKey);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (err) { /* fall through and rebuild */ }
+  }
+
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const sh = ss.getSheetByName(SHIFTS_TAB);
   if (!sh || sh.getLastRow() < 2) return [];
@@ -185,7 +196,9 @@ function listOpenShifts(daysAhead) {
     });
   });
 
-  return order.sort().map(function (k) { return byDate[k]; });
+  const result = order.sort().map(function (k) { return byDate[k]; });
+  try { cache.put(cacheKey, JSON.stringify(result), 60); } catch (err) { /* >100KB — skip cache */ }
+  return result;
 }
 
 /**
@@ -350,9 +363,10 @@ function submitShiftSignup(data) {
 
       newRows.push([
         Utilities.getUuid().slice(0, 8), id, new Date(d), hhmm_(r[SH_START - 1]),
-        r[SH_ACTIVITY - 1] || SHIFT_ACTIVITY, first, last, email, phone,
-        String(data.postal || '').trim(), 'Yes', now,
-        String(data.source || WEBSITE_URL), 'Scheduled', ''
+        r[SH_ACTIVITY - 1] || SHIFT_ACTIVITY,
+        sanitizeCell_(first), sanitizeCell_(last), sanitizeCell_(email), sanitizeCell_(phone),
+        sanitizeCell_(String(data.postal || '').trim()), 'Yes', now,
+        sanitizeCell_(String(data.source || WEBSITE_URL)), 'Scheduled', ''
       ]);
       countUpdates.push({ row: idx + 2, value: signed + 1 });
       shiftRows[idx][SH_SIGNED_UP - 1] = signed + 1;   // keep local copy in step
