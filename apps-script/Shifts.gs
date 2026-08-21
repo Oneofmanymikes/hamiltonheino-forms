@@ -214,6 +214,108 @@ function pruneObsoleteShifts() {
   return { removed: doomed.length, kept: kept };
 }
 
+/**
+ * Retire a start time from the schedule, moving anyone already booked.
+ *
+ * Deleting a slot that people have booked into would silently cancel real
+ * volunteers, who would then turn up to nothing. So this MOVES them to the
+ * replacement time on the SAME DAY first (creating that slot if it does not
+ * exist yet), fixes both capacity counters, and only then deletes the old slot.
+ *
+ *   dow        0 = Sunday … 6 = Saturday
+ *   fromStart  'HH:MM' being retired
+ *   toStart    'HH:MM' to move people to; '' to refuse if anyone is booked
+ *
+ * Past shifts are never touched. Returns who was moved so they can be told.
+ */
+function retireShiftSlot(dow, fromStart, toStart) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  const su = ensureSignupsSheet_(ss);
+  const tz = Session.getScriptTimeZone();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  if (sh.getLastRow() < 2) return { removed: 0, moved: [] };
+  const shRows = sh.getRange(2, 1, sh.getLastRow() - 1, SH_COLS).getValues();
+
+  // Index the destination slots by date so we can retarget quickly.
+  const destByDate = {};
+  shRows.forEach(function (r, i) {
+    if (!r[SH_ID - 1]) return;
+    const dv = r[SH_DATE - 1];
+    const d = (dv instanceof Date) ? dv : parseYmdLocal_(String(dv));
+    if (!d) return;
+    if (hhmm_(r[SH_START - 1]) === toStart) {
+      destByDate[Utilities.formatDate(d, tz, 'yyyy-MM-dd')] = { row: i + 2, id: r[SH_ID - 1] };
+    }
+  });
+
+  const suRows = su.getLastRow() >= 2
+    ? su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues() : [];
+
+  const moved = [], doomedRows = [], blocked = [];
+  shRows.forEach(function (r, i) {
+    if (!r[SH_ID - 1]) return;
+    const dv = r[SH_DATE - 1];
+    const d = (dv instanceof Date) ? dv : parseYmdLocal_(String(dv));
+    if (!d) return;
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    if (day < today) return;                       // never rewrite history
+    if (d.getDay() !== dow) return;
+    if (hhmm_(r[SH_START - 1]) !== fromStart) return;
+
+    const oldId = r[SH_ID - 1];
+    const dateStr = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+    const dest = destByDate[dateStr];
+
+    // Re-point every live signup on this slot.
+    let movedHere = 0;
+    for (let k = 0; k < suRows.length; k++) {
+      if (String(suRows[k][SU_SHIFT_ID - 1]) !== String(oldId)) continue;
+      if (String(suRows[k][SU_STATUS - 1] || '') === SS_CANCELLED) continue;
+      if (!dest) { blocked.push(dateStr + ' ' + fromStart); return; }
+      const row = k + 2;
+      su.getRange(row, SU_SHIFT_ID).setValue(dest.id);
+      su.getRange(row, SU_TIME).setValue(toStart);
+      su.getRange(row, SU_REMINDED_AT).setValue('');   // time changed — remind again
+      moved.push({ name: String(suRows[k][SU_FIRST - 1] || '') + ' ' +
+                         String(suRows[k][SU_LAST - 1] || ''),
+                   email: suRows[k][SU_EMAIL - 1] || '',
+                   phone: suRows[k][SU_PHONE - 1] || '',
+                   date: Utilities.formatDate(d, tz, 'EEEE, MMMM d'),
+                   from: prettyTime_(fromStart), to: prettyTime_(toStart) });
+      movedHere++;
+    }
+
+    if (movedHere && dest) {
+      const cur = Number(sh.getRange(dest.row, SH_SIGNED_UP).getValue()) || 0;
+      sh.getRange(dest.row, SH_SIGNED_UP).setValue(cur + movedHere);
+    }
+    doomedRows.push(i + 2);
+  });
+
+  doomedRows.sort(function (a, b) { return b - a; })
+            .forEach(function (row) { sh.deleteRow(row); });
+
+  logActivity_('system', 'slot_retired', 'shift', fromStart,
+               'dow ' + dow + ' ' + fromStart + ' -> ' + (toStart || 'deleted') +
+               '; ' + doomedRows.length + ' slots, ' + moved.length + ' people moved');
+  return { removed: doomedRows.length, moved: moved, blocked: blocked };
+}
+
+function adminRetireShiftSlot(token, dow, fromStart, toStart) {
+  requireAdmin_(token);
+  try {
+    const res = retireShiftSlot(Number(dow), String(fromStart), String(toStart || ''));
+    return { ok: true, removed: res.removed, moved: res.moved, blocked: res.blocked,
+             message: 'Removed ' + res.removed + ' slot(s); moved ' +
+                      res.moved.length + ' booked volunteer(s) to ' +
+                      (toStart ? prettyTime_(toStart) : 'nowhere') + '.' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+}
+
 /** Admin: apply a schedule change — add the new slots, drop the obsolete ones. */
 function adminApplySchedule(token, startDateStr, endDateStr) {
   requireAdmin_(token);
