@@ -125,9 +125,13 @@
 
     <div class="sec">
       <h1 style="font-size:.95rem">Canvass shifts</h1>
-      <p class="sub">Creates shift slots for every day in the range &mdash; weekdays
-         1&ndash;3 PM and 5&ndash;7 PM, weekends also 10 AM&ndash;12 PM. Re-running only
-         adds days that do not exist yet; it never changes or removes existing shifts.</p>
+      <p class="sub">Creates the slots for every day in the range:
+         <b>Mon&ndash;Fri</b> 1 PM and 5 PM &middot;
+         <b>Sat</b> 10 AM, 1 PM, 3 PM and 5 PM &middot;
+         <b>Sun</b> 12 noon, 3 PM and 5 PM. Each block runs two hours.
+         Re-running adds any missing slots and removes future ones that are no
+         longer on the schedule &mdash; except any that already have people
+         booked, which are listed for you to move by hand.</p>
       <div class="row">
         <div><label for="sFrom">From</label><input type="date" id="sFrom"></div>
         <div><label for="sTo">To</label><input type="date" id="sTo"></div>
@@ -338,7 +342,7 @@
       show('shiftMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
            (res && res.ok) ? 'ok' : 'bad');
     }).withFailureHandler(function () { show('shiftMsg', 'Failed.', 'bad'); })
-      .adminGenerateShifts(TOKEN,
+      .adminApplySchedule(TOKEN,
         document.getElementById('sFrom').value,
         document.getElementById('sTo').value);
   }

@@ -14,7 +14,7 @@
  * "it works for me but not for her". Every staff page polls getBuildStamp() and
  * reloads itself when this changes (never mid-call — see the guard in the page).
  */
-const APP_BUILD = '2026-08-05.25';
+const APP_BUILD = '2026-08-05.26';
 
 function getBuildStamp() { return APP_BUILD; }
 

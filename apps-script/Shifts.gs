@@ -20,18 +20,42 @@ const SHIFT_ACTIVITY    = 'Canvass';
 const SHIFT_CAPACITY    = 20;          // per shift; set 0 for unlimited
 const SHIFT_LOCATION    = '';          // optional: shown to volunteers, e.g. 'Campaign office, 123 Main St E'
 
-// The schedule. Weekdays run two blocks; weekends add a 10 AM.
-// Times are 24h 'HH:MM'. Changing these changes future generated shifts only —
-// already-generated rows keep their times (regenerating never edits existing rows).
+// The schedule, keyed BY DAY OF WEEK. Saturday and Sunday differ from each
+// other, so a weekday/weekend split cannot express it:
+//   Mon-Fri   1 PM, 5 PM
+//   Saturday  10 AM, 1 PM, 3 PM, 5 PM
+//   Sunday    12 noon, 3 PM, 5 PM
+// Times are 24h 'HH:MM' and every block runs two hours. Changing these affects
+// NEWLY generated shifts only — existing rows keep the times they were made
+// with, so edit here then run generateShifts + pruneObsoleteShifts.
 const SHIFT_BLOCKS_WEEKDAY = [
   { start: '13:00', end: '15:00', label: 'Afternoon' },
   { start: '17:00', end: '19:00', label: 'Evening'   }
 ];
-const SHIFT_BLOCKS_WEEKEND = [
-  { start: '10:00', end: '12:00', label: 'Morning'   },
-  { start: '13:00', end: '15:00', label: 'Afternoon' },
+const SHIFT_BLOCKS_SATURDAY = [
+  { start: '10:00', end: '12:00', label: 'Morning'          },
+  { start: '13:00', end: '15:00', label: 'Early afternoon'  },
+  { start: '15:00', end: '17:00', label: 'Late afternoon'   },
+  { start: '17:00', end: '19:00', label: 'Evening'          }
+];
+const SHIFT_BLOCKS_SUNDAY = [
+  { start: '12:00', end: '14:00', label: 'Midday'    },
+  { start: '15:00', end: '17:00', label: 'Afternoon' },
   { start: '17:00', end: '19:00', label: 'Evening'   }
 ];
+// 0 = Sunday … 6 = Saturday
+const SHIFT_BLOCKS_BY_DOW = {
+  0: SHIFT_BLOCKS_SUNDAY,
+  1: SHIFT_BLOCKS_WEEKDAY,
+  2: SHIFT_BLOCKS_WEEKDAY,
+  3: SHIFT_BLOCKS_WEEKDAY,
+  4: SHIFT_BLOCKS_WEEKDAY,
+  5: SHIFT_BLOCKS_WEEKDAY,
+  6: SHIFT_BLOCKS_SATURDAY
+};
+// Every distinct block, for start -> end lookups during repair.
+const ALL_SHIFT_BLOCKS = SHIFT_BLOCKS_WEEKDAY
+  .concat(SHIFT_BLOCKS_SATURDAY).concat(SHIFT_BLOCKS_SUNDAY);
 
 /*** COLUMN MAPS ***/
 const SH_ID = 1, SH_DATE = 2, SH_DAY = 3, SH_START = 4, SH_END = 5,
@@ -68,8 +92,7 @@ const SIGNUP_HEADERS = ['Signup ID', 'Shift ID', 'Date', 'Time', 'Activity',
 
 /** Blocks for a day of week. 0=Sun … 6=Sat. Canvass runs every day. */
 function shiftsForDayOfWeek_(dow) {
-  const weekend = (dow === 0 || dow === 6);
-  return (weekend ? SHIFT_BLOCKS_WEEKEND : SHIFT_BLOCKS_WEEKDAY).map(function (b) {
+  return (SHIFT_BLOCKS_BY_DOW[dow] || []).map(function (b) {
     return {
       start: b.start,
       end: b.end,
@@ -134,6 +157,80 @@ function generateShifts(startDateStr, endDateStr) {
   return { added: newRows.length,
            from: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
            to: Utilities.formatDate(end, tz, 'yyyy-MM-dd') };
+}
+
+/**
+ * Remove FUTURE shifts that no longer match the schedule.
+ *
+ * generateShifts only ever adds, so after a schedule change the old slots linger
+ * — e.g. changing Sunday from 10 AM/1 PM to 12/3/5 leaves the 10 AM and 1 PM
+ * Sundays sitting there for volunteers to book into.
+ *
+ * Safety rules:
+ *   - past shifts are never touched (they are the attendance record)
+ *   - a shift with ANY signup is never deleted; it is reported instead, so a
+ *     human decides whether to move those people rather than silently
+ *     cancelling on them
+ */
+function pruneObsoleteShifts() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  if (sh.getLastRow() < 2) return { removed: 0, kept: [] };
+
+  const tz = Session.getScriptTimeZone();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const n = sh.getLastRow() - 1;
+  const rows = sh.getRange(2, 1, n, SH_COLS).getValues();
+
+  const doomed = [], kept = [];
+  for (let i = 0; i < n; i++) {
+    const r = rows[i];
+    if (!r[SH_ID - 1]) continue;
+    const dv = r[SH_DATE - 1];
+    const d = (dv instanceof Date) ? dv : parseYmdLocal_(String(dv));
+    if (!d || isNaN(d.getTime())) continue;
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    if (day < today) continue;                       // never rewrite history
+
+    const wanted = (SHIFT_BLOCKS_BY_DOW[d.getDay()] || [])
+      .map(function (b) { return b.start; });
+    const start = hhmm_(r[SH_START - 1]);
+    if (wanted.indexOf(start) !== -1) continue;      // still on the schedule
+
+    const label = Utilities.formatDate(d, tz, 'EEE MMM d') + ' ' + prettyTime_(start);
+    if (Number(r[SH_SIGNED_UP - 1] || 0) > 0) {
+      kept.push(label + ' (' + r[SH_SIGNED_UP - 1] + ' signed up)');
+    } else {
+      doomed.push(i + 2);
+    }
+  }
+
+  // Delete bottom-up so earlier row numbers stay valid.
+  doomed.sort(function (a, b) { return b - a; })
+        .forEach(function (row) { sh.deleteRow(row); });
+
+  logActivity_('system', 'shifts_pruned', 'shift', '',
+               doomed.length + ' removed, ' + kept.length + ' kept (had signups)');
+  return { removed: doomed.length, kept: kept };
+}
+
+/** Admin: apply a schedule change — add the new slots, drop the obsolete ones. */
+function adminApplySchedule(token, startDateStr, endDateStr) {
+  requireAdmin_(token);
+  try {
+    const gen = generateShifts(startDateStr, endDateStr);
+    const pruned = pruneObsoleteShifts();
+    let msg = 'Added ' + gen.added + ' shift' + (gen.added === 1 ? '' : 's') +
+              ' and removed ' + pruned.removed + ' obsolete one' +
+              (pruned.removed === 1 ? '' : 's') + '.';
+    if (pruned.kept.length) {
+      msg += ' KEPT (people already booked, move them by hand): ' +
+             pruned.kept.join('; ');
+    }
+    return { ok: true, message: msg, kept: pruned.kept };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
 }
 
 /** Admin-triggered generation, so nobody has to open the script editor. */
@@ -730,9 +827,7 @@ function repairShiftTimes() {
   if (sh.getLastRow() < 2) return { fixed: 0 };
 
   const endByStart = {};
-  SHIFT_BLOCKS_WEEKEND.concat(SHIFT_BLOCKS_WEEKDAY).forEach(function (b) {
-    endByStart[b.start] = b.end;
-  });
+  ALL_SHIFT_BLOCKS.forEach(function (b) { endByStart[b.start] = b.end; });
 
   const n = sh.getLastRow() - 1;
   const ids = sh.getRange(2, SH_ID, n, 1).getValues();
