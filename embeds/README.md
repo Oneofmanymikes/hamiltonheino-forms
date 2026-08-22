@@ -64,6 +64,10 @@ Each block runs two hours.
 | Saturday | 10:00 AM, 1:00 PM, 3:00 PM, 5:00 PM |
 | Sunday | 12:00 noon, 3:00 PM, 5:00 PM |
 
+**Advance poll days (Wed 26 and Thu 27 August)** are different: one all-day
+9 AM - 8 PM slot with no cap, badged "All day". Selecting it reveals a
+"What hours can you make?" box so volunteers write in their own times.
+
 ## Things that look like bugs but are not
 
 - **Heights are fixed.** A cross-origin iframe cannot report its own height, so
