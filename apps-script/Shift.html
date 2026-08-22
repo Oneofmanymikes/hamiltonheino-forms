@@ -31,6 +31,14 @@
     .chk { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0;
            font-size: .84rem; color: #333; }
     .chk input { margin-top: 2px; accent-color: var(--accent); }
+    .allday { display: none; margin: 10px 0 0; padding: 11px; border-radius: 9px;
+              background: #fff8e8; border: 1px solid #f0dfae; }
+    .allday label { display: block; font-size: .84rem; font-weight: 600; margin-bottom: 5px; }
+    .allday .hint { font-weight: 400; color: #6b5a2a; font-size: .78rem; display: block;
+                    margin-top: 3px; }
+    .badge { background: #1a1a1a; color: #fff; font-size: .62rem; font-weight: 700;
+             padding: 2px 6px; border-radius: 20px; margin-left: 6px;
+             text-transform: uppercase; letter-spacing: .05em; }
     .known { display: none; margin: 8px 0 0; padding: 9px 11px; border-radius: 8px;
              background: #eaf7ee; border: 1px solid #b7e0c4; color: #1c5c31; font-size: .85rem; }
     button { width: 100%; margin-top: 8px; padding: 13px; background: var(--accent);
@@ -54,6 +62,16 @@
 
     <h2>Choose your shifts</h2>
     <div id="slots"><p class="empty">Loading available shifts&hellip;</p></div>
+
+    <!-- Shown only for all-day advance-poll days, where people set their own hours -->
+    <div class="allday" id="alldayBox">
+      <label for="availability">What hours can you make?
+        <span class="hint">This is an all-day push, so tell us roughly when you can
+          come and we will slot you in. For example: &ldquo;10am&ndash;1pm, then
+          back after 5&rdquo;.</span>
+      </label>
+      <input type="text" id="availability" placeholder="e.g. 10am to 1pm">
+    </div>
 
     <h2>Your details</h2>
 
@@ -89,7 +107,7 @@
 </div>
 
 <script>
-  var CHOSEN = {};
+  var CHOSEN = {}, ALLDAY_IDS = {};
 
   google.script.run.withSuccessHandler(renderSlots)
                    .withFailureHandler(function () {
@@ -109,12 +127,14 @@
     days.forEach(function (d) {
       html += '<div class="day"><div class="day-hd">' + esc(d.label) + '</div>';
       d.shifts.forEach(function (s) {
+        if (s.allDay) ALLDAY_IDS[s.shiftId] = true;
         html += '<label class="slot">' +
                   '<input type="checkbox" value="' + esc(s.shiftId) + '" onchange="toggle(this)">' +
                   '<span class="slot-main">' +
                     '<span class="slot-time">' + esc(s.label) + '</span><br>' +
                     '<span class="slot-desc">' + esc(s.desc) + '</span>' +
                   '</span>' +
+                  (s.allDay ? '<span class="badge">All day</span>' : '') +
                   (s.tight ? '<span class="tight">' + s.remaining + ' left</span>' : '') +
                 '</label>';
       });
@@ -125,6 +145,9 @@
 
   function toggle(cb) {
     if (cb.checked) CHOSEN[cb.value] = true; else delete CHOSEN[cb.value];
+    // Ask for hours only when at least one all-day shift is selected.
+    var anyAllDay = Object.keys(CHOSEN).some(function (id) { return ALLDAY_IDS[id]; });
+    document.getElementById('alldayBox').style.display = anyAllDay ? 'block' : 'none';
   }
 
   /* Phone recognition: if we already have this person, hide the name/email
@@ -197,6 +220,7 @@
         phone: document.getElementById('phone').value,
         postal: document.getElementById('postal').value,
         consent: true,
+        availability: (document.getElementById('availability') || {}).value || '',
         shiftIds: ids
       });
   }

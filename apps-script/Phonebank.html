@@ -104,6 +104,8 @@
     .wp .ph { color: #666; font-size: .71rem; user-select: all; -webkit-user-select: all; }
     .none { font-size: .73rem; color: #b0b0b0; font-style: italic; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .hrs { font-size: .7rem; color: #7a5c00; background: #fff8e8; padding: 1px 5px;
+           border-radius: 4px; display: inline-block; }
     .att { font-size: .68rem; color: #777; text-decoration: none; margin-right: 5px; }
     .att:hover { color: #d71920; text-decoration: underline; }
     .tag { font-size: .62rem; padding: 1px 5px; border-radius: 20px; font-weight: 700; }
@@ -318,6 +320,7 @@
           s.people.forEach(function (p) {
             html += '<div class="wp' + (p.cancelled ? ' cancelled' : '') + '">' +
                     esc(p.first + ' ' + p.last) + attMark(p) +
+                    (p.note ? '<br><span class="hrs">' + esc(p.note) + '</span>' : '') +
                     (p.phone ? '<br><span class="ph">' + esc(p.phone) + '</span>' : '') +
                     '<br>' + attButtons(p) + '</div>';
           });

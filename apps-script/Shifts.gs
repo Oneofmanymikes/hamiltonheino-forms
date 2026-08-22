@@ -88,6 +88,86 @@ const SIGNUP_HEADERS = ['Signup ID', 'Shift ID', 'Date', 'Time', 'Activity',
                         'Consent', 'Signed up at', 'Source', 'Status', 'Notes',
                         'Reminded at', 'Confirmed at', 'Attended at', 'Thanked at'];
 
+/* ---------------------------------------------------------------------------
+ * SPECIAL ALL-DAY SHIFTS (advance polls)
+ *
+ * Advance-poll days are not normal shifts. Doorknocking runs from open to
+ * close, people drift in and out, and nobody signs up for a tidy two-hour
+ * block. So these are ONE all-day slot per day with:
+ *   - unlimited capacity (0 is the existing "no cap" sentinel)
+ *   - a free-text "what hours can you make?" box on the signup form
+ * The stated hours land in the signup's Notes and show in the week grid, so an
+ * organiser can see the actual coverage across the day.
+ *
+ * A shift counts as all-day when its block spans ALL_DAY_MIN_HOURS or more —
+ * derived, so no extra column was needed on the Shifts tab.
+ * ------------------------------------------------------------------------ */
+const ALL_DAY_MIN_HOURS = 6;
+const ADVANCE_POLL_START = '09:00';
+const ADVANCE_POLL_END   = '20:00';
+
+/** Is this block long enough to be an all-day, write-in-your-hours shift? */
+function isAllDayBlock_(start, end) {
+  const a = String(hhmm_(start)).split(':');
+  const b = String(hhmm_(end)).split(':');
+  if (a.length < 2 || b.length < 2) return false;
+  const mins = (Number(b[0]) * 60 + Number(b[1])) - (Number(a[0]) * 60 + Number(a[1]));
+  return mins >= ALL_DAY_MIN_HOURS * 60;
+}
+
+/**
+ * Create an all-day doorknocking shift on each given date.
+ * dates: array of 'YYYY-MM-DD'. Idempotent — an existing ID is left alone.
+ */
+function addAllDayShifts(dates, description) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  const tz = Session.getScriptTimeZone();
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const existing = {};
+  if (sh.getLastRow() >= 2) {
+    sh.getRange(2, SH_ID, sh.getLastRow() - 1, 1).getValues()
+      .forEach(function (r) { if (r[0]) existing[r[0]] = true; });
+  }
+
+  const rows = [];
+  (dates || []).forEach(function (ds) {
+    const d = parseYmdLocal_(ds);
+    if (!d) return;
+    const dateStr = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+    const id = dateStr + '_' + ADVANCE_POLL_START.replace(':', '') + '_canvass';
+    if (existing[id]) return;
+    rows.push([id, new Date(d), dayNames[d.getDay()],
+               ADVANCE_POLL_START, ADVANCE_POLL_END, SHIFT_ACTIVITY,
+               description || 'Advance poll — doorknocking, all day',
+               0,        // 0 = unlimited: people self-schedule within the day
+               0]);
+  });
+
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, SH_COLS).setValues(rows);
+    sh.getRange(2, SH_START, sh.getMaxRows() - 1, 2).setNumberFormat('@');
+    sh.getRange(2, 1, sh.getLastRow() - 1, SH_COLS)
+      .sort([{ column: SH_DATE, ascending: true }, { column: SH_START, ascending: true }]);
+  }
+  logActivity_('system', 'alldayshifts_added', 'shift', '', rows.length + ' created');
+  return { added: rows.length, dates: dates };
+}
+
+function adminAddAllDayShifts(token, datesCsv, description) {
+  requireAdmin_(token);
+  try {
+    const dates = String(datesCsv || '').split(',')
+      .map(function (x) { return x.trim(); }).filter(String);
+    const res = addAllDayShifts(dates, description);
+    return { ok: true, message: 'Created ' + res.added + ' all-day shift' +
+                                (res.added === 1 ? '' : 's') + '.' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+}
+
 /*** SCHEDULE ***/
 
 /** Blocks for a day of week. 0=Sun … 6=Sat. Canvass runs every day. */
@@ -406,6 +486,7 @@ function listOpenShifts(daysAhead) {
       label: prettyRange_(r[SH_START - 1], r[SH_END - 1]),
       desc: String(r[SH_DESC - 1] || ''),
       remaining: remaining,
+      allDay: isAllDayBlock_(r[SH_START - 1], r[SH_END - 1]),
       tight: (capacity > 0 && remaining <= 3)         // show "only N left"
     });
   });
@@ -580,7 +661,8 @@ function submitShiftSignup(data) {
         r[SH_ACTIVITY - 1] || SHIFT_ACTIVITY,
         sanitizeCell_(first), sanitizeCell_(last), sanitizeCell_(email), sanitizeCell_(phone),
         sanitizeCell_(String(data.postal || '').trim()), 'Yes', now,
-        sanitizeCell_(String(data.source || WEBSITE_URL)), SS_SCHEDULED, '',
+        sanitizeCell_(String(data.source || WEBSITE_URL)), SS_SCHEDULED,
+        sanitizeCell_(String(data.availability || '').trim()),
         '', '', '', ''   // reminded / confirmed / attended / thanked
       ]);
       countUpdates.push({ row: idx + 2, value: signed + 1 });
@@ -650,6 +732,7 @@ function getWeekGrid(startDateStr, token) {
                      start: hhmm_(r[SH_START - 1]),
                      label: prettyRange_(r[SH_START - 1], r[SH_END - 1]),
                      capacity: Number(r[SH_CAPACITY - 1]) || 0,
+                     allDay: isAllDayBlock_(r[SH_START - 1], r[SH_END - 1]),
                      people: [] };
       byDate[ds].slots.push(slot);
       slotByKey[r[SH_ID - 1]] = slot;
@@ -665,6 +748,7 @@ function getWeekGrid(startDateStr, token) {
                          first: r[SU_FIRST - 1] || '', last: r[SU_LAST - 1] || '',
                          email: r[SU_EMAIL - 1] || '', phone: r[SU_PHONE - 1] || '',
                          status: st,
+                         note: r[SU_NOTES - 1] || '',
                          cancelled: st === SS_CANCELLED,
                          confirmed: !!r[SU_CONFIRMED_AT - 1],
                          attended: st === SS_ARRIVED || st === SS_COMPLETED,
