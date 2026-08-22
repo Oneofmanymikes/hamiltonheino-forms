@@ -142,6 +142,30 @@
     </div>
 
     <div class="sec">
+      <h1 style="font-size:.95rem">Advance polls &amp; election day</h1>
+      <p class="sub">All-day doorknocking days with <b>no cap</b>. Volunteers write in
+         the hours they can make, and those hours appear beside their name in the
+         tracker and on the <b>GOTV Signups</b> sheet.</p>
+      <div class="row">
+        <div><label for="advDates">Advance poll dates (comma separated)</label>
+          <input type="text" id="advDates" placeholder="2026-08-26, 2026-08-27"></div>
+        <div style="max-width:150px"><label>&nbsp;</label>
+          <button style="width:100%" onclick="doAdvance()">Create</button></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label for="edayDate">Election day</label>
+          <input type="date" id="edayDate"></div>
+        <div style="max-width:150px"><label>&nbsp;</label>
+          <button style="width:100%" onclick="doEday()">Create</button></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div style="max-width:230px"><button style="width:100%" onclick="doGotv()">
+          Rebuild GOTV Signups sheet</button></div>
+      </div>
+      <div id="advMsg" class="msg"></div>
+    </div>
+
+    <div class="sec">
       <h1 style="font-size:.95rem">Call list</h1>
       <p class="sub">Pulls new people from the form tabs and the Master List into
          <b>CallList</b>, the one tab the phone bank runs on. Adds only people it
@@ -345,6 +369,34 @@
       .adminApplySchedule(TOKEN,
         document.getElementById('sFrom').value,
         document.getElementById('sTo').value);
+  }
+
+  function doAdvance() {
+    show('advMsg', 'Creating…', 'ok');
+    google.script.run.withSuccessHandler(function (res) {
+      show('advMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
+           (res && res.ok) ? 'ok' : 'bad');
+    }).withFailureHandler(function () { show('advMsg', 'Failed.', 'bad'); })
+      .adminAddAllDayShifts(TOKEN, document.getElementById('advDates').value,
+                            'Advance poll — doorknocking, all day');
+  }
+
+  function doEday() {
+    show('advMsg', 'Creating…', 'ok');
+    google.script.run.withSuccessHandler(function (res) {
+      show('advMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
+           (res && res.ok) ? 'ok' : 'bad');
+    }).withFailureHandler(function () { show('advMsg', 'Failed.', 'bad'); })
+      .adminAddElectionDay(TOKEN, document.getElementById('edayDate').value);
+  }
+
+  function doGotv() {
+    show('advMsg', 'Rebuilding…', 'ok');
+    google.script.run.withSuccessHandler(function (res) {
+      show('advMsg', (res && res.ok) ? res.message : ((res && res.error) || 'Failed.'),
+           (res && res.ok) ? 'ok' : 'bad');
+    }).withFailureHandler(function () { show('advMsg', 'Failed.', 'bad'); })
+      .adminRebuildGotvSheet(TOKEN);
   }
 
   function doBuild() {

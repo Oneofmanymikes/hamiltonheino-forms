@@ -103,8 +103,23 @@ const SIGNUP_HEADERS = ['Signup ID', 'Shift ID', 'Date', 'Time', 'Activity',
  * derived, so no extra column was needed on the Shifts tab.
  * ------------------------------------------------------------------------ */
 const ALL_DAY_MIN_HOURS = 6;
-const ADVANCE_POLL_START = '09:00';
+// Matched to Elections Ontario's actual poll hours for this by-election, so the
+// shift window is exactly when a voter we knock up can still cast a ballot.
+//   Advance polls (Aug 26/27/28): 10 AM - 8 PM
+//   Election day  (Sep 3):         9 AM - 9 PM
+const ADVANCE_POLL_START = '10:00';
 const ADVANCE_POLL_END   = '20:00';
+const ELECTION_DAY_START = '09:00';
+const ELECTION_DAY_END   = '21:00';
+
+// Advance + election-day signups get their own readable sheet for the GOTV
+// organiser. It is a REBUILT VIEW, not a second store: every signup still lives
+// in ShiftSignups, because capacity, reminders, confirmation calls and
+// attendance all read that one tab. A second store would fragment them.
+const GOTV_TAB = 'GOTV Signups';
+const GOTV_HEADERS = ['Date', 'Day', 'Shift', 'Hours they can make', 'First name',
+                      'Last name', 'Phone', 'Email', 'Postal code', 'Status',
+                      'Signed up at', 'Signup ID'];
 
 /** Is this block long enough to be an all-day, write-in-your-hours shift? */
 function isAllDayBlock_(start, end) {
@@ -153,6 +168,143 @@ function addAllDayShifts(dates, description) {
   }
   logActivity_('system', 'alldayshifts_added', 'shift', '', rows.length + ' created');
   return { added: rows.length, dates: dates };
+}
+
+/**
+ * Create the all-day election-day shift. Same shape as an advance day, longer
+ * hours, and flagged in the description so it is unmistakable in the list.
+ */
+function addElectionDayShift(dateStr) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  const tz = Session.getScriptTimeZone();
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const d = parseYmdLocal_(dateStr);
+  if (!d) throw new Error('Bad date: ' + dateStr);
+
+  const dateOnly = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  const id = dateOnly + '_' + ELECTION_DAY_START.replace(':', '') + '_canvass';
+  if (sh.getLastRow() >= 2) {
+    const ids = sh.getRange(2, SH_ID, sh.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === id) return { added: 0, id: id };
+    }
+  }
+  sh.appendRow([id, new Date(d), dayNames[d.getDay()],
+                ELECTION_DAY_START, ELECTION_DAY_END, SHIFT_ACTIVITY,
+                'ELECTION DAY — get out the vote, all day', 0, 0]);
+  sh.getRange(2, SH_START, sh.getMaxRows() - 1, 2).setNumberFormat('@');
+  sh.getRange(2, 1, sh.getLastRow() - 1, SH_COLS)
+    .sort([{ column: SH_DATE, ascending: true }, { column: SH_START, ascending: true }]);
+  logActivity_('system', 'electionday_added', 'shift', id, dateOnly);
+  return { added: 1, id: id };
+}
+
+/**
+ * Delete one shift by ID. Refuses if anyone is booked on it — use
+ * retireShiftSlot to move people first. For tidying up a slot created in error.
+ */
+function adminDeleteShift(token, shiftId) {
+  requireAdmin_(token);
+  const sh = ensureShiftsSheet_(SpreadsheetApp.openById(SHEET_ID));
+  const row = findShiftRow_(sh, shiftId);
+  if (row === -1) return { ok: false, error: 'No shift with that ID.' };
+  const signed = Number(sh.getRange(row, SH_SIGNED_UP).getValue()) || 0;
+  if (signed > 0) {
+    return { ok: false, error: signed + ' volunteer(s) are booked on that shift. ' +
+                               'Move them first rather than deleting it.' };
+  }
+  sh.deleteRow(row);
+  logActivity_(requireStaff_(token).email, 'shift_deleted', 'shift', shiftId, '');
+  return { ok: true, message: 'Deleted ' + shiftId + '.' };
+}
+
+function adminAddElectionDay(token, dateStr) {
+  requireAdmin_(token);
+  try {
+    const res = addElectionDayShift(String(dateStr || '').trim());
+    rebuildGotvSheet();
+    return { ok: true, message: res.added
+      ? 'Election day shift created for ' + dateStr + '.'
+      : 'That election day shift already exists.' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+}
+
+/**
+ * Rebuild the GOTV Signups tab: everyone booked onto an all-day shift
+ * (advance polls and election day), with the hours they said they can make.
+ *
+ * Sorted by date then by their written-in hours, so an organiser reading down
+ * the sheet sees the shape of the day's coverage rather than signup order.
+ * Regenerated from scratch each time, so it can never disagree with the real
+ * data in ShiftSignups.
+ */
+function rebuildGotvSheet() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShiftsSheet_(ss);
+  const su = ensureSignupsSheet_(ss);
+  const tz = Session.getScriptTimeZone();
+
+  // Which shifts are all-day (advance / e-day)?
+  const allDay = {};
+  if (sh.getLastRow() >= 2) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, SH_COLS).getValues().forEach(function (r) {
+      if (!r[SH_ID - 1]) return;
+      if (!isAllDayBlock_(r[SH_START - 1], r[SH_END - 1])) return;
+      allDay[r[SH_ID - 1]] = { desc: r[SH_DESC - 1] || '',
+                               label: prettyRange_(r[SH_START - 1], r[SH_END - 1]) };
+    });
+  }
+
+  const rows = [];
+  if (su.getLastRow() >= 2) {
+    su.getRange(2, 1, su.getLastRow() - 1, SU_COLS).getValues().forEach(function (r) {
+      const info = allDay[r[SU_SHIFT_ID - 1]];
+      if (!info) return;
+      // Cancelled people must not appear: this sheet gets printed and worked
+      // from on the day, and a cancelled name reads as someone to expect.
+      if (String(r[SU_STATUS - 1] || '') === SS_CANCELLED) return;
+      const dv = r[SU_DATE - 1];
+      const d = (dv instanceof Date) ? dv : parseYmdLocal_(String(dv));
+      rows.push({
+        sort: (d ? d.getTime() : 0),
+        hours: String(r[SU_NOTES - 1] || ''),
+        vals: [
+          d ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : '',
+          d ? Utilities.formatDate(d, tz, 'EEEE') : '',
+          info.desc, String(r[SU_NOTES - 1] || ''),
+          r[SU_FIRST - 1] || '', r[SU_LAST - 1] || '', r[SU_PHONE - 1] || '',
+          r[SU_EMAIL - 1] || '', r[SU_POSTAL - 1] || '',
+          r[SU_STATUS - 1] || SS_SCHEDULED,
+          r[SU_SIGNED_AT - 1] || '', r[SU_ID - 1] || ''
+        ]
+      });
+    });
+  }
+  rows.sort(function (a, b) { return a.sort - b.sort || a.hours.localeCompare(b.hours); });
+
+  let g = ss.getSheetByName(GOTV_TAB);
+  if (!g) {
+    g = ss.insertSheet(GOTV_TAB);
+  } else if (g.getLastRow() > 0) {
+    g.clear();                                    // rebuilt view — safe to wipe
+  }
+  g.getRange(1, 1, 1, GOTV_HEADERS.length).setValues([GOTV_HEADERS]).setFontWeight('bold');
+  g.setFrozenRows(1);
+  if (rows.length) {
+    g.getRange(2, 1, rows.length, GOTV_HEADERS.length)
+     .setValues(rows.map(function (r) { return r.vals; }));
+  }
+  return { rows: rows.length };
+}
+
+function adminRebuildGotvSheet(token) {
+  requireAdmin_(token);
+  const res = rebuildGotvSheet();
+  return { ok: true, message: 'GOTV Signups rebuilt — ' + res.rows + ' entr' +
+                              (res.rows === 1 ? 'y' : 'ies') + '.' };
 }
 
 function adminAddAllDayShifts(token, datesCsv, description) {
@@ -633,6 +785,7 @@ function submitShiftSignup(data) {
     }
 
     const booked = [], skipped = [], newRows = [], countUpdates = [];
+    let bookedAllDay = false;
     const now = new Date();
 
     shiftIds.forEach(function (id) {
@@ -665,6 +818,7 @@ function submitShiftSignup(data) {
         sanitizeCell_(String(data.availability || '').trim()),
         '', '', '', ''   // reminded / confirmed / attended / thanked
       ]);
+      if (isAllDayBlock_(r[SH_START - 1], r[SH_END - 1])) bookedAllDay = true;
       countUpdates.push({ row: idx + 2, value: signed + 1 });
       shiftRows[idx][SH_SIGNED_UP - 1] = signed + 1;   // keep local copy in step
       booked.push(human);
@@ -683,6 +837,10 @@ function submitShiftSignup(data) {
     });
 
     SpreadsheetApp.flush();
+    // If any of these were advance / election-day shifts, refresh the organiser's
+    // GOTV sheet so it is never stale. Best-effort: a view failing must not fail
+    // the booking itself.
+    if (bookedAllDay) { try { rebuildGotvSheet(); } catch (err) {} }
     notifyShiftSignup_(first, last, email, phone, booked);
     return { ok: true, booked: booked };
 
